@@ -15,5 +15,56 @@
                 anchor="right"
                 icon="AllIcons.Vcs.Merge"
                 factoryClass="com.mythic.localreview.ui.ReviewToolWindowFactory"/>
+    <notificationGroup id="Local Review" displayType="BALLOON"/>
+    <applicationConfigurable parentId="tools"
+                             instance="com.mythic.localreview.ui.ReviewSettingsConfigurable"
+                             id="com.mythic.localreview.settings"
+                             displayName="Local Review"/>
+    <diff.DiffExtension implementation="com.mythic.localreview.ui.diff.ReviewDiffExtension"/>
   </extensions>
+
+  <actions>
+    <group id="LocalReview.Toolbar">
+      <action id="LocalReview.NewReview" class="com.mythic.localreview.ui.NewReviewAction"
+              text="New Review..." description="Create a local review by picking two git comparison points"
+              icon="AllIcons.General.Add"/>
+      <action id="LocalReview.OpenReview" class="com.mythic.localreview.ui.OpenReviewAction"
+              text="Open Review..." description="Open an existing local review of this repository"
+              icon="AllIcons.Actions.MenuOpen"/>
+      <action id="LocalReview.UpdateReview" class="com.mythic.localreview.ui.UpdateReviewAction"
+              text="Update Review" description="Re-resolve base/head refs, pin the new commits and re-anchor comments"
+              icon="AllIcons.Actions.Refresh"/>
+      <separator/>
+      <action id="LocalReview.OpenDiff" class="com.mythic.localreview.ui.OpenFirstDiffAction"
+              text="Open Diff" description="Open the diff viewer on the first file not yet reviewed"
+              icon="AllIcons.Actions.Diff"/>
+      <action id="LocalReview.AddReviewNote" class="com.mythic.localreview.ui.AddReviewNoteAction"
+              text="Add Review-Level Comment..." description="Add a comment about the review as a whole"
+              icon="AllIcons.General.Balloon"/>
+      <action id="LocalReview.HideViewed" class="com.mythic.localreview.ui.ToggleHideViewedAction"
+              text="Hide Reviewed Files" description="Hide files already marked as reviewed"
+              icon="AllIcons.General.Filter"/>
+      <separator/>
+      <action id="LocalReview.Export" class="com.mythic.localreview.ui.ExportReviewAction"
+              text="Export Review..." description="Export the review as Markdown, JSON and an agent prompt"
+              icon="AllIcons.ToolbarDecorator.Export"/>
+      <action id="LocalReview.CopyAgentPrompt" class="com.mythic.localreview.ui.CopyAgentPromptAction"
+              text="Copy Agent Prompt" description="Copy a ready-to-paste prompt containing all open feedback"
+              icon="AllIcons.Actions.Copy"/>
+      <action id="LocalReview.ProposeAgentsMd" class="com.mythic.localreview.ui.ProposeAgentsMdAction"
+              text="Propose AGENTS.md Rules..." description="Preview and write rules gathered from comments marked as recurring patterns"
+              icon="AllIcons.Actions.IntentionBulb"/>
+      <separator/>
+      <action id="LocalReview.CloseReview" class="com.mythic.localreview.ui.CloseReviewAction"
+              text="Close Review" description="Close the active review (nothing is deleted)"
+              icon="AllIcons.Actions.Close"/>
+    </group>
+
+    <group id="LocalReview.ChangesPopup">
+      <action id="LocalReview.OpenSelectedDiff" class="com.mythic.localreview.ui.OpenSelectedDiffAction"/>
+      <action id="LocalReview.MarkSelectedViewed" class="com.mythic.localreview.ui.MarkSelectedViewedAction"/>
+      <action id="LocalReview.MarkSelectedUnviewed" class="com.mythic.localreview.ui.MarkSelectedUnviewedAction"/>
+      <action id="LocalReview.CommentOnSelectedFile" class="com.mythic.localreview.ui.CommentOnSelectedFileAction"/>
+    </group>
+  </actions>
 </idea-plugin>

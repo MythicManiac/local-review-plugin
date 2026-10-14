@@ -17,6 +17,7 @@ dependencies {
     intellijPlatform {
         local(providers.gradleProperty("ideLocalPath").get())
         bundledPlugin("Git4Idea")
+        bundledModules("intellij.platform.vcs.dvcs", "intellij.platform.vcs.dvcs.impl", "intellij.platform.vcs.dvcs.impl.shared")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
     }
     testImplementation("junit:junit:4.13.2")

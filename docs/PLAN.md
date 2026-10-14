@@ -6,10 +6,10 @@ Status legend: `[ ]` todo, `[x]` done. Each phase ends with a commit.
 - [x] **P1 Scaffold** — Gradle + IntelliJ Platform Gradle Plugin against local PyCharm, `plugin.xml`, empty tool window, `runIde` boots.
 - [x] **P2 Core model + store** — model, atomic writes, tombstones, corruption quarantine, auto-commit to review repo. Unit tested.
 - [ ] **P3 Git service + review lifecycle** — (core done: resolve, merge-base, diff, create, update + tests; create dialog pending in P4) Update review (re-anchor, invalidate marks). Tested with temp repos.
-- [ ] **P4 Tool window** — review picker, changes tree with directory structure and status colours (A/D/R/M), viewed checkbox, comment counts, progress bar.
-- [ ] **P5 Diff integration** — open IDE diff for a file, inline comment threads, add-comment gutter/selection action, edit/resolve/delete (tombstone) in place, hunk viewed marks, file/review-level comments.
-- [ ] **P6 Comments tab** — list/filter (kind, status, file, deleted), navigate to diff, restore tombstoned.
-- [ ] **P7 Export** — Markdown report, JSON, agent prompt, per-comment clipboard prompt, rule candidates, AGENTS.md proposal diff.
+- [~] **P4 Tool window** — review picker, changes tree with directory structure and status colours (A/D/R/M), viewed checkbox, comment counts, progress bar.
+- [~] **P5 Diff integration** — open IDE diff for a file, inline comment threads, add-comment gutter/selection action, edit/resolve/delete (tombstone) in place, hunk viewed marks, file/review-level comments.
+- [~] **P6 Comments tab** — list/filter (kind, status, file, deleted), navigate to diff, restore tombstoned.
+- [~] **P7 Export** — Markdown report, JSON, agent prompt, per-comment clipboard prompt, rule candidates, AGENTS.md proposal diff.
 - [ ] **P8 Smoke + docs** — run the sandbox IDE end to end, README usage, changelog.
 
 ## Risks / open items
