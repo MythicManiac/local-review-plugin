@@ -19,12 +19,14 @@ Non-goals: calling an LLM from the plugin, remote PR integration, multi-user rea
 
 | # | Question | Decision |
 |---|----------|----------|
-| D1 | State storage | One folder per review **outside** the project, plain JSON files, each review folder is its **own git repo, auto-committed** on every change. Sync = add a remote / use any file sync. |
+| D1 | State storage | Plain JSON files outside the project in **review groups**: one group = one git repo, auto-committed on every change, holding the reviews of any number of projects (see D7). *(Initially one repo per review; replaced by groups.)* |
 | D2 | Comparison semantics | Review **pins resolved SHAs**. Default diff is PR-style (merge-base of base and head → head). An explicit **Update review** action re-resolves the refs, re-anchors comments, marks unmatched ones *outdated*, and invalidates viewed-marks whose content changed. |
 | D3 | Progress | **File-level and hunk-level** "viewed" marks. A mark is bound to a content fingerprint and auto-invalidates when the content changes. |
 | D4 | Working tree | **Not** a comparison side. Commits / branches / tags only. Anchors can therefore be exact (line numbers valid for a pinned SHA). |
 | D5 | AGENTS.md | Comments can carry a **rule candidate**. Report has a "Proposed AGENTS.md rules" section; an IDE action opens a diff of `AGENTS.md` with the rules appended for the user to edit/accept; an agent-prompt export wraps report + "update AGENTS.md" instruction. |
 | D6 | Export | Markdown report; agent-oriented Markdown + machine-readable JSON (stable IDs); clipboard-ready per-comment prompt. |
+
+| D7 | Grouping & sync | Reviews belong to a **group**; a group is one git repo and may have a **remote** for auto-syncing between devices. Many projects share a group (history of reviews in one place, one remote to configure); separate groups isolate state (e.g. different organisations, each with its own remote). |
 
 Decisions made without asking (low-regret, easy to change):
 
@@ -60,22 +62,58 @@ What we reuse instead (all public, stable-or-widely-used platform APIs):
 ## Storage layout
 
 ```
-<store-root>/<repo-name>/<review-id>/        # a git repo, auto-committed
-  review.json                                 # metadata + pinned revisions
-  comments/<comment-uuid>.json                # one file per comment (merge-friendly)
-  progress/<sha1(path)[0..16]>.json           # one file per reviewed file (file + hunk marks)
-  exports/<timestamp>/{report.md,report.json,agent-prompt.md}
+<store-root>/                                   default ~/.local-review
+  <group>/                                      ONE git repo per group (branch: main), optional `origin` remote
+    group.json                                  marker: schemaVersion, id, createdAt
+    .gitignore                                  *.tmp
+    <repo-name>/<review-id>/                    one folder per review, any number of projects per group
+      review.json                               metadata + pinned revisions
+      comments/<comment-uuid>.json              one file per comment (merge-friendly)
+      progress/<sha1(path)[0..16]>.json         one file per reviewed file (file + hunk marks)
+      exports/<timestamp>/{report.md,report.json,agent-prompt.md}
+  .state/                                       per-machine pointers, NEVER synced, outside every group repo
+    last-opened/<key>.txt                       last open review per IDE project (crash-safe resume)
+    repo-groups/<key>.txt                       which group a project's reviews default to
+  .legacy/<repo>/<id>.git                       old per-review histories kept by the one-time migration
 ```
-
-Per-project "last opened review" pointers live beside the reviews in `<store-root>/.state/last-opened/` (atomic writes), not in IDE state,
-so resume survives crashes and forced kills.
 
 * `review.json`: `schemaVersion`, `id`, `title`, `repo{name, remoteUrl?, lastKnownPath}`, `baseRef`, `headRef`,
   `mergeBase` (bool), `revisions[]` (append-only `{n, at, baseSha, headSha, effectiveBaseSha}`), `createdAt`.
 * Comment: `id`, `kind` (`CHANGE_REQUEST|QUESTION|NOTE`), `status` (`OPEN|RESOLVED|WONT_FIX`), `body`,
   `anchor{scope FILE|LINES|REVIEW, path, side BASE|HEAD, startLine, endLine, snippet, before[], after[], revision}`,
   `outdated`, `rule?` (AGENTS.md candidate), `createdAt`, `updatedAt`, `deletedAt?` (**tombstone**).
-* Progress file: `path`, `fileFingerprint`, `viewed`, `hunks[{fingerprint, viewed}]`, `updatedAt`.
+* Progress file: `path`, `viewedFingerprint`, `viewedHunks[]`, `hunkCount`, `updatedAt`.
+* Projects are matched to their reviews by remote URL (normalised) else repo folder name, so a review made on one device
+  is found on another where the checkout lives elsewhere.
+
+### Groups
+
+* **Group = repo.** Each group has its own history, its own remote and its own sync state; nothing is shared between groups,
+  which is the isolation boundary. The remote URL is the repo's `origin`, so plain `git` works on it; the per-machine
+  *auto-sync* switch is `git config localreview.autosync` (default on once a remote exists; never synced).
+* A new review asks for its group (default: the one last used for that project, else `default`). Creating a group with
+  a remote that already holds a group (made on another device) downloads it.
+* **Migration:** the previous layout (`<root>/<repo>/<id>/`, one git repo per review) is imported into the `default` group on
+  first start; each review's old `.git` moves to `.legacy/` (never deleted) and resume pointers are re-targeted.
+
+### Sync
+
+`GroupSync` per group, run in the background: commit pending changes → `fetch` → merge `origin/main` (unrelated histories
+allowed, so two machines that each started a local group can later be connected) → `push`, retried if the remote moved.
+
+* Triggers: debounced (15 s) after local commits, on opening a review in the group, every 5 min while a group is in use,
+  and manually (**Sync Review Group**, **Manage Review Groups → Sync Now**). Only groups with a remote and auto-sync on
+  sync automatically. Nothing is pushed on IDE shutdown (commits are local-durable and go out on the next sync).
+* One file per entity means merges are conflict-free in practice. If both devices edit the **same file**, nothing is
+  dropped: the winner (newer `updatedAt`; for `review.json` more revisions; content hash as tie-break, so both devices choose
+  the same) stays in place and the loser is kept as `<file>.conflict-<hash8>`. The deterministic name means both devices
+  converge to identical state. Stores report kept conflicts as problems on load.
+* A sync merge holds the group's repository lock; every file write takes the same lock, so a half-merged tree is never
+  written into. After a pull, the open review is reloaded from disk and the UI updates live.
+* Failures (offline, auth) never touch local data. They show in the header/Manage dialog and as one notification until
+  the next success. Credentials come from the user's normal git setup (SSH agent/credential manager); prompts are disabled.
+* A synced review can reference commits that do not exist locally (the other device's unpushed branch). The review opens
+  with a visible warning instead of failing; fetch the branch and run **Update Review**.
 
 ### Durability rules
 
@@ -83,11 +121,12 @@ so resume survives crashes and forced kills.
 2. The UI only shows "saved" after the rename succeeded; failures are surfaced as an error notification and the editor
    keeps the draft open.
 3. **Nothing is ever deleted.** Removing a comment sets `deletedAt`; the UI offers *Show deleted* / *Restore*.
-4. After each write an asynchronous, coalesced `git add -A && git commit` runs in the review repo (identity falls back to
+4. After each write an asynchronous, coalesced `git add -A && git commit` runs in the group repo (identity falls back to
    `Local Review <local-review@localhost>` if none configured). Commit failure never loses data (files are already
    durable) and is reported in the status bar widget / tool window.
-5. On load, unreadable/corrupt files are quarantined (renamed `*.corrupt`) and reported — never silently dropped.
-6. IDs are random UUIDs so independent devices never collide; per-entity files keep git merges trivial.
+5. Renames over the target are retried briefly on Windows sharing violations (our own background `git add`, antivirus).
+6. On load, unreadable/corrupt files are quarantined (renamed `*.corrupt`) and reported — never silently dropped.
+7. IDs are random UUIDs so independent devices never collide; per-entity files keep git merges trivial.
 
 ## Anchoring & update
 

@@ -4,6 +4,7 @@ Kotlin JetBrains plugin; see `docs/DESIGN.md` (decisions) and `docs/PLAN.md` (st
 
 * Build with `JAVA_HOME` = PyCharm's JBR (JDK 25); system `java` is 8. Use `./gradlew`, never a global Gradle.
 * Package `com.mythic.localreview`: `core` (no IDE imports — keep it unit-testable), `git`, `ui`.
+* A review group = one git repo shared by all its stores through one `GitCommitter` (never create a second committer for a group dir; get it from `ReviewGroups.committer`). File writes go through `GitCommitter.exclusive`.
 * Persisted state is user data: every write goes through `ReviewStore` (atomic temp+rename). Never delete review
   files; use tombstones (`deletedAt`). Persisted formats are versioned (`schemaVersion`); readers ignore unknown keys.
 * Do not depend on `com.intellij.collaboration.*` (review UI kit is deprecated/unstable; see docs/DESIGN.md). Use stable platform APIs.

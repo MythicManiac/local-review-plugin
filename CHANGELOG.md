@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+* **Review groups:** reviews are stored in groups, one git repo per group holding many projects' reviews, instead of one repo per review.
+  Groups can have a remote and **auto-sync between devices** (debounced after changes, on open, periodic, manual). Separate groups isolate
+  projects/organisations (own history and remote).
+* Conflict-safe merging: concurrent edits of the same file keep both versions (`*.conflict-*`) and converge on all devices.
+* Reviews synced from another device open with a warning if their commits are not available locally.
+* New: Manage Review Groups dialog, Sync Review Group action, group picker in New Review, group and sync state in the header.
+* Automatic one-time migration of the previous per-review layout into the `default` group (old histories kept in `.legacy/`).
+
 ## 0.1.0
 
 First complete version.

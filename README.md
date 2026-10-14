@@ -21,15 +21,25 @@ Open the **Local Review** tool window (right stripe, or *Ctrl+Shift+A* → "Loca
 | Track progress | Checkbox per hunk (gutter), **Mark File as Reviewed** (diff toolbar), **Next Unreviewed File**. Marks invalidate themselves when the code changes ("changed since viewed"). |
 | Agent pushed more commits | **Update Review**: re-pins refs, re-anchors comments (unmatched ones become *outdated*), keeps hunk marks whose content is unchanged. |
 | Find things again | **Comments** tab: filter by status/kind/outdated/deleted, double-click to jump to the code, restore deleted. |
+| Sync / groups | **Manage Review Groups…** (create groups, set remote, auto-sync on/off, sync now), **Sync Review Group**; the header shows the group and sync state. |
 | Hand off | **Export Review…** → `report.md`, `report.json` (stable ids), `agent-prompt.md`. **Copy prompt** on a single comment. **Propose AGENTS.md Rules…** shows an editable diff before writing. |
 
 Everything is saved the moment you press save; the header shows "✓ saved". Closing the IDE (or killing it) loses nothing, and the last
 open review reopens automatically.
 
-## Where data lives
+## Where data lives: review groups
 
-`~/.local-review/<repo>/<review-id>/` (configurable: *Settings → Tools → Local Review*). Each review folder is a **git repo of plain JSON files, auto-committed**
-on every change; add a remote or use any file sync to move it between devices. See [docs/DESIGN.md](docs/DESIGN.md#storage-layout).
+Reviews live in **groups** under `~/.local-review/` (configurable: *Settings → Tools → Local Review*). A group is **one git repo of plain JSON files, auto-committed**
+on every change, holding the reviews of as many projects as you like (`<group>/<project>/<review>/`).
+
+* **Sync between devices:** *Manage Review Groups…* → select the group → *Set Remote…* (any git remote, e.g. a private GitHub repo). It then syncs automatically (after changes,
+  when you open a review, every few minutes) or on demand (*Sync Review Group*). On another device, create a group with the same remote and everything appears; no per-review setup.
+* **Isolation:** create separate groups (*New Review → New group…*) for work that must not share history or a remote, e.g. different organisations.
+  Each group has its own history and remote; the New Review dialog remembers the group per project.
+* **Conflicts:** per-comment files make them rare; if the same file was edited on two devices the newer edit wins and the other version is kept as `*.conflict-*` (you get a notification).
+* Upgrading: reviews from the previous one-repo-per-review layout are imported into the `default` group automatically (old histories are kept under `.legacy/`).
+
+See [docs/DESIGN.md](docs/DESIGN.md#storage-layout).
 
 ## Build & run
 

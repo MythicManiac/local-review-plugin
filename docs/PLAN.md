@@ -19,14 +19,23 @@ Status legend: `[ ]` todo, `[x]` done. Each phase ends with a commit.
 * Unified (inline) diff viewer needs line mapping; side-by-side is primary, unified supported if the mapping API is clean.
 * GUI cannot be fully driven headlessly; smoke relies on `runIde` plus IDE-level tests for the diff extension.
 
+## Follow-up: review groups (done)
+
+- [x] Groups (one repo per group, many projects), per-project default group, isolation between groups
+- [x] Optional remote per group, background auto-sync, conflict-safe merge, live reload after pull
+- [x] Group UI (picker, manage dialog, sync action, header status), one-time migration of the old layout
+
 ## Verification done
 
-* 35 automated tests (core store/anchoring/lifecycle with real git, export, headless platform test that renders a real diff viewer and asserts inlays/markers).
+* 46 automated tests (incl. two-device sync against a real bare remote, conflict convergence, migration)
+* (earlier) 35 automated tests (core store/anchoring/lifecycle with real git, export, headless platform test that renders a real diff viewer and asserts inlays/markers).
 * Manual smoke in the sandbox IDE (`runIde`): create review, tree statuses, open diff, add/edit comment, hunk + file marks, rule candidate, AGENTS.md proposal/write,
   export, Update Review re-anchoring, forced IDE kill then automatic resume with all data intact.
 
 ## Known limits / ideas not done
 
+* Moving a review to a different group is not offered (copy by hand if needed).
+* Nothing is pushed at IDE shutdown; unsynced commits go out on the next sync.
 * Drafts being typed are not auto-saved until you press save (saved comments always are).
 * Agent replies are not imported back; the JSON export carries stable ids so this can be added.
 * Diff viewer tab is closed on Update Review (it shows a single revision).
