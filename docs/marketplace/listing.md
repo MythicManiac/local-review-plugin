@@ -11,8 +11,8 @@ Everything the JetBrains Marketplace upload form and plugin page ask for, in one
 | Version | `0.1.0` | `gradle.properties` `pluginVersion` |
 | Price | Free | n/a |
 | License | Apache-2.0 | `LICENSE`; select "Apache-2.0" in the upload form |
-| Source code URL | **needed** (public repo; required for open-source licenses) | `gradle.properties` `pluginUrl` + upload form |
-| Vendor name / website / email | **needed** (must be valid and reachable) | `gradle.properties` `pluginVendorName/Url/Email` |
+| Source code URL | https://github.com/MythicManiac/local-review-plugin (**must be public before submitting**) | `gradle.properties` `pluginUrl` + upload form |
+| Vendor name / website / email | Mythic / https://github.com/MythicManiac / mythicmaniac@gmail.com | `gradle.properties` `pluginVendorName/Url/Email` |
 | Compatible products | All IntelliJ-based IDEs with the bundled Git plugin, 2026.2+ (`since-build` 262, no upper bound) | `build.gradle.kts` |
 | Tags (pick in the form) | `Code Quality`, `VCS Integration`, `Productivity` | upload form |
 | Description | `docs/marketplace/description.html` | injected into `plugin.xml` |

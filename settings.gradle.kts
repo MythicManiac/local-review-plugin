@@ -1,1 +1,1 @@
-rootProject.name = "local-review-plugin"
+rootProject.name = "local-diff-review"
