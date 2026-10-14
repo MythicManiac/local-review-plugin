@@ -42,3 +42,9 @@ intellijPlatform {
 tasks.test {
     useJUnit()
 }
+
+// `./gradlew runIde -PdemoProject=<path>` opens that project in the sandbox IDE (dev smoke testing).
+tasks.runIde {
+    providers.gradleProperty("demoProject").orNull?.let { args = listOf(it) }
+    jvmArgs("-Didea.trust.all.projects=true", "-Dide.show.tips.on.startup.default.value=false", "-Djb.privacy.policy.text=<!--999.999-->", "-Djb.consents.confirmation.enabled=false")
+}

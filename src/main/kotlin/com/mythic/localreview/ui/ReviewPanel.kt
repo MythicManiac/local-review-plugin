@@ -76,14 +76,15 @@ class ReviewPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
         }
         val r = a.store.review()
         val rev = r.current
-        val viewed = a.changes.count { a.isViewed(it) }
+
         val open = a.store.comments().count { it.status == CommentStatus.OPEN }
         val warn = a.store.commitError
         val saved = if (warn == null) "<span style='color:#59a869'>✓ saved</span>"
         else "<span style='color:#d9a343'>✓ saved to disk · git history: ${warn.take(80).replace("<", "&lt;")}</span>"
-        status.text = "<html><b>${r.title.replace("<", "&lt;")}</b> &nbsp; <span style='color:gray'>${r.baseRef} (${rev.effectiveBaseSha.take(7)}) → ${r.headRef} (${rev.headSha.take(7)}) · revision ${rev.n}</span>" +
-            "<br>$viewed/${a.changes.size} files viewed · $open open comments · $saved</html>"
-        status.foreground = JBColor.foreground()
+        fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;")
+        status.text = "<html><b>${esc(r.title)}</b>" +
+            "<br><span style='color:gray'>${esc(r.baseRef)} (${rev.effectiveBaseSha.take(7)}) → ${esc(r.headRef)} (${rev.headSha.take(7)}) · revision ${rev.n}</span>" +
+            "<br>$open open comments · $saved</html>"
     }
 
     override fun uiDataSnapshot(sink: DataSink) {}

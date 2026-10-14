@@ -44,13 +44,18 @@ val CommentKind.icon
         CommentKind.NOTE -> AllIcons.General.Information
     }
 
-/** Fixed content width of inline comment widgets (px, unscaled). */
+/** Maximum content width of inline comment widgets (px, unscaled); they shrink to fit narrow diff panes. */
 const val INLINE_WIDTH = 720
+
+/** Inline widgets whose width follows the editor they are embedded in. */
+interface WidthAdjustable {
+    var contentWidth: Int
+}
 
 /** The editable fields of a comment: kind, text and optional AGENTS.md rule candidate. */
 class CommentForm(initialKind: CommentKind, initialBody: String, initialRule: String?) : JPanel(BorderLayout()) {
     private val kindButtons = CommentKind.entries.associateWith { JRadioButton(it.label) }
-    val bodyArea = JBTextArea(initialBody, 4, 60).apply { lineWrap = true; wrapStyleWord = true }
+    val bodyArea = JBTextArea(initialBody, 5, 60).apply { lineWrap = true; wrapStyleWord = true; font = UIUtil.getLabelFont() }
     private val ruleCheck = JBCheckBox("Recurring pattern: propose an AGENTS.md rule", initialRule != null)
     private val ruleText = JBTextField(initialRule ?: "").apply {
         emptyText.text = "Rule for agents, e.g. \"Never catch Exception without logging it\""
@@ -69,7 +74,7 @@ class CommentForm(initialKind: CommentKind, initialBody: String, initialRule: St
         ruleCheck.addActionListener { ruleText.isEnabled = ruleCheck.isSelected; if (ruleCheck.isSelected) ruleText.requestFocusInWindow() }
         val form = FormBuilder.createFormBuilder()
             .addComponent(kindRow)
-            .addComponent(JBScrollPane(bodyArea).apply { preferredSize = Dimension(JBUI.scale(INLINE_WIDTH - 24), JBUI.scale(90)) })
+            .addComponent(JBScrollPane(bodyArea))
             .addComponent(ruleCheck)
             .addComponent(ruleText)
             .panel
@@ -96,7 +101,7 @@ class InlineComposer(
     defaultKind: CommentKind = CommentKind.CHANGE_REQUEST,
     private val onSave: (CommentKind, String, String?) -> String?,
     private val onCancel: () -> Unit,
-) : JPanel(BorderLayout()) {
+) : JPanel(BorderLayout()), WidthAdjustable {
     val form = CommentForm(initial?.kind ?: defaultKind, initial?.body ?: "", initial?.rule)
     private val error = JBLabel().apply { foreground = JBColor.RED; isVisible = false }
 
@@ -132,10 +137,9 @@ class InlineComposer(
 
     fun focusText() { form.bodyArea.requestFocusInWindow() }
 
-    override fun getPreferredSize(): Dimension {
-        val d = super.getPreferredSize()
-        return Dimension(JBUI.scale(INLINE_WIDTH), d.height)
-    }
+    override var contentWidth: Int = JBUI.scale(INLINE_WIDTH)
+
+    override fun getPreferredSize(): Dimension = Dimension(contentWidth, super.getPreferredSize().height)
 }
 
 /** Callbacks a [CommentCard] needs from its host. */
@@ -147,7 +151,8 @@ interface CommentCardActions {
 }
 
 /** Read-only display of one comment with Edit / Resolve / Delete buttons. */
-class CommentCard(val comment: Comment, actions: CommentCardActions) : JPanel(BorderLayout()) {
+class CommentCard(val comment: Comment, actions: CommentCardActions) : JPanel(BorderLayout()), WidthAdjustable {
+    override var contentWidth: Int = JBUI.scale(INLINE_WIDTH)
     private val bodyArea = JBTextArea(comment.body)
 
     init {
@@ -185,6 +190,7 @@ class CommentCard(val comment: Comment, actions: CommentCardActions) : JPanel(Bo
         val header = JPanel(BorderLayout()).apply { isOpaque = false; add(left, BorderLayout.WEST); add(buttons, BorderLayout.EAST) }
 
         bodyArea.apply {
+            font = UIUtil.getLabelFont()
             isEditable = false
             lineWrap = true
             wrapStyleWord = true
@@ -205,7 +211,7 @@ class CommentCard(val comment: Comment, actions: CommentCardActions) : JPanel(Bo
     }
 
     override fun getPreferredSize(): Dimension {
-        val w = JBUI.scale(INLINE_WIDTH)
+        val w = contentWidth
         // A wrapping text area computes its height from its current width, so give it the target width first.
         bodyArea.setSize(w - insets.left - insets.right, Short.MAX_VALUE.toInt())
         return Dimension(w, super.getPreferredSize().height)

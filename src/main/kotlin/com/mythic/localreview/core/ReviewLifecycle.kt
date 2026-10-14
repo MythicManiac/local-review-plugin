@@ -19,7 +19,7 @@ class ReviewRepository(val root: Path, private val gitExe: String = "git") {
         if (!root.isDirectory()) return emptyList()
         val out = ArrayList<ReviewSummary>()
         Files.list(root).use { repos ->
-            repos.filter { it.isDirectory() }.forEach { repoDir ->
+            repos.filter { it.isDirectory() && !it.name.startsWith(".") }.forEach { repoDir ->
                 Files.list(repoDir).use { reviews ->
                     reviews.filter { it.resolve(ReviewStore.REVIEW_FILE).exists() }.forEach { d ->
                         val r = ReviewStore.readReviewOrNull(d) ?: return@forEach
@@ -40,6 +40,22 @@ class ReviewRepository(val root: Path, private val gitExe: String = "git") {
     private fun normalizeUrl(u: String) = u.trim().removeSuffix("/").removeSuffix(".git").lowercase()
 
     fun open(summary: ReviewSummary): ReviewStore = ReviewStore.open(summary.dir, GitCommitter(summary.dir, gitExe))
+
+    // ---- per-project "last opened review" pointer, stored beside the reviews so it survives crashes ----------
+
+    private fun pointerFile(projectKey: String): Path =
+        root.resolve(".state").resolve("last-opened").resolve(Fingerprints.pathKey(projectKey) + ".txt")
+
+    /** Records which review the project had open; null = none (explicitly closed). */
+    fun rememberLastOpened(projectKey: String, reviewDir: Path?) =
+        AtomicFiles.write(pointerFile(projectKey), (reviewDir?.toString() ?: "").toByteArray(Charsets.UTF_8))
+
+    fun lastOpened(projectKey: String): Path? = try {
+        Files.readString(pointerFile(projectKey)).trim().takeIf { it.isNotEmpty() }?.let { Path.of(it) }
+            ?.takeIf { it.resolve(ReviewStore.REVIEW_FILE).exists() }
+    } catch (e: java.io.IOException) {
+        null
+    }
 
     /**
      * Resolves the refs in [repoGit]'s repository, pins them, and creates the review folder.

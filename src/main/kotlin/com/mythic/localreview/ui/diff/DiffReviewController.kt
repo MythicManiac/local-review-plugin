@@ -43,6 +43,8 @@ import com.mythic.localreview.ui.ReviewService
 import com.mythic.localreview.ui.comments.CommentCard
 import com.mythic.localreview.ui.comments.CommentCardActions
 import com.mythic.localreview.ui.comments.InlineComposer
+import com.mythic.localreview.ui.comments.INLINE_WIDTH
+import com.mythic.localreview.ui.comments.WidthAdjustable
 import java.awt.BorderLayout
 import java.awt.datatransfer.StringSelection
 import java.io.IOException
@@ -102,10 +104,10 @@ class DiffReviewController(
         else -> emptyList()
     }
 
-    private class Entry(val comment: Comment, val inlay: Inlay<*>?, val host: JPanel)
+    private class Entry(val comment: Comment, val inline: Inline?, val host: JPanel)
 
     private val entries = HashMap<String, Entry>()
-    private val drafts = ArrayList<Inlay<*>>()
+    private val drafts = ArrayList<Inline>()
     private val hunkMarkers = ArrayList<Pair<EditorEx, RangeHighlighter>>()
     private var hunks: List<Hunk> = emptyList()
     private val storeListener: () -> Unit = { SwingUtilities.invokeLater { if (!disposed) sync() } }
@@ -117,7 +119,12 @@ class DiffReviewController(
 
     init {
         Disposer.register(viewer, this)
-        for (t in targets) installHover(t)
+        for (t in targets) {
+            installHover(t)
+            t.editor.scrollPane.viewport.addComponentListener(object : java.awt.event.ComponentAdapter() {
+                override fun componentResized(e: java.awt.event.ComponentEvent?) = refitAll()
+            })
+        }
         store.addListener(storeListener)
         (viewer as? DiffViewerBase)?.addListener(object : DiffViewerListener() {
             override fun onAfterRediff() {
@@ -134,12 +141,17 @@ class DiffReviewController(
     }
 
     private fun clearRendered() {
-        entries.values.forEach { it.inlay?.let(Disposer::dispose) }
+        entries.values.forEach { it.inline?.dispose() }
         entries.clear()
-        drafts.forEach(Disposer::dispose)
+        drafts.forEach { it.dispose() }
         drafts.clear()
         hunkMarkers.forEach { (ed, hl) -> if (!ed.isDisposed) ed.markupModel.removeHighlighter(hl) }
         hunkMarkers.clear()
+    }
+
+    private fun refitAll() {
+        entries.values.forEach { it.inline?.refresh() }
+        drafts.forEach { it.refresh() }
     }
 
     // ---- sync ---------------------------------------------------------------------------------------------
@@ -155,7 +167,7 @@ class DiffReviewController(
         for (id in entries.keys.toList()) {
             val e = entries[id]!!
             if (id !in desiredIds || e.comment != desired.first { it.id == id }) {
-                e.inlay?.let(Disposer::dispose)
+                e.inline?.dispose()
                 entries.remove(id)
             }
         }
@@ -181,8 +193,8 @@ class DiffReviewController(
         }
         val host = JPanel(BorderLayout()).apply { isOpaque = false }
         showCard(host, c)
-        val inlay = addInlay(target.editor, line, above, host, priority)
-        entries[c.id] = Entry(c, inlay, host)
+        val inline = addInlay(target.editor, line, above, host, priority)
+        entries[c.id] = Entry(c, inline, host)
     }
 
     private fun showCard(host: JPanel, c: Comment) {
@@ -200,11 +212,10 @@ class DiffReviewController(
                 onSave = { kind, body, rule ->
                     saving { store.updateComment(c.id) { it.copy(kind = kind, body = body, rule = rule) } }
                 },
-                onCancel = { showCard(e.host, c); e.inlay?.update() },
+                onCancel = { showCard(e.host, c); e.inline?.refresh() },
             )
             e.host.add(composer, BorderLayout.CENTER)
-            e.host.revalidate()
-            e.inlay?.update()
+            e.inline?.refresh()
             composer.focusText()
         }
 
@@ -232,7 +243,23 @@ class DiffReviewController(
         "Could not save: ${e.message}"
     }
 
-    private fun addInlay(editor: EditorEx, line: Int, above: Boolean, component: JComponent, priority: Int): Inlay<*>? {
+    /** An inline component embedded in an editor; its content width follows the editor's visible width. */
+    private class Inline(val inlay: Inlay<*>, val host: JComponent, val editor: EditorEx) {
+        fun fit() {
+            val w = (editor.scrollPane.viewport.width - JBUI.scale(56)).coerceIn(JBUI.scale(260), JBUI.scale(INLINE_WIDTH))
+            (host as? JPanel)?.components?.forEach { if (it is WidthAdjustable) it.contentWidth = w }
+        }
+
+        fun refresh() {
+            fit()
+            host.revalidate()
+            inlay.update()
+        }
+
+        fun dispose() = Disposer.dispose(inlay)
+    }
+
+    private fun addInlay(editor: EditorEx, line: Int, above: Boolean, component: JPanel, priority: Int): Inline? {
         val doc = editor.document
         val offset = if (above) doc.getLineStartOffset(line) else doc.getLineEndOffset(line)
         val wrapper = JPanel(BorderLayout()).apply {
@@ -240,10 +267,11 @@ class DiffReviewController(
             border = JBUI.Borders.empty(4, 12)
             add(component, BorderLayout.WEST)
         }
-        return EditorEmbeddedComponentManager.getInstance().addComponent(
+        val inlay = EditorEmbeddedComponentManager.getInstance().addComponent(
             editor, wrapper,
             EditorEmbeddedComponentManager.Properties(EditorEmbeddedComponentManager.ResizePolicy.none(), null, false, above, false, true, priority, offset),
-        )
+        ) ?: return null
+        return Inline(inlay, component, editor).also { it.fit() }
     }
 
     // ---- adding comments --------------------------------------------------------------------------------------------
@@ -258,21 +286,26 @@ class DiffReviewController(
         var hoverLine = -1
         var highlighter: RangeHighlighter? = null
 
-        fun clear() {
+        fun place(line: Int, renderer: GutterIconRenderer) {
             highlighter?.let { if (!editor.isDisposed) editor.markupModel.removeHighlighter(it) }
-            highlighter = null
+            val doc = editor.document
+            highlighter = editor.markupModel.addRangeHighlighter(
+                null, doc.getLineStartOffset(line), doc.getLineEndOffset(line), HighlighterLayer.LAST, HighlighterTargetArea.LINES_IN_RANGE,
+            ).also { it.gutterIconRenderer = renderer }
+        }
+
+        // An invisible placeholder keeps the gutter lane reserved so showing/hiding the "+" never shifts the layout.
+        fun clear() {
             hoverLine = -1
+            if (!editor.isDisposed && editor.document.lineCount > 0) place(0, LaneSpacer)
         }
 
         fun moveTo(line: Int) {
             if (line == hoverLine) return
-            clear()
             val doc = editor.document
-            if (line < 0 || line >= doc.lineCount || t.fromEditorLine(line) == null) return
+            if (line < 0 || line >= doc.lineCount || t.fromEditorLine(line) == null) return clear()
             hoverLine = line
-            highlighter = editor.markupModel.addRangeHighlighter(
-                null, doc.getLineStartOffset(line), doc.getLineEndOffset(line), HighlighterLayer.LAST, HighlighterTargetArea.LINES_IN_RANGE,
-            ).also { it.gutterIconRenderer = AddCommentRenderer(line) { startComposer(t, line) } }
+            place(line, AddCommentRenderer(line) { startComposer(t, line) })
         }
 
         editor.addEditorMouseMotionListener(object : EditorMouseMotionListener {
@@ -287,6 +320,7 @@ class DiffReviewController(
                 if (!editor.component.contains(p)) clear()
             }
         }, this)
+        clear()
     }
 
     private fun startComposer(t: EditorTarget, clickedLine: Int) {
@@ -320,19 +354,20 @@ class DiffReviewController(
         )
 
         val host = JPanel(BorderLayout()).apply { isOpaque = false }
-        var inlay: Inlay<*>? = null
+        var handle: Inline? = null
+        fun dismiss() {
+            handle?.let { drafts.remove(it); it.dispose() }
+        }
         val composer = InlineComposer(
             initial = null,
             onSave = { kind, body, rule ->
-                saving { store.addComment(kind, body, anchor, rule) }.also { err ->
-                    if (err == null) { inlay?.let { drafts.remove(it); Disposer.dispose(it) } }
-                }
+                saving { store.addComment(kind, body, anchor, rule) }.also { err -> if (err == null) dismiss() }
             },
-            onCancel = { inlay?.let { drafts.remove(it); Disposer.dispose(it) } },
+            onCancel = ::dismiss,
         )
         host.add(composer, BorderLayout.CENTER)
-        inlay = addInlay(editor, endLine, false, host, Int.MAX_VALUE)
-        if (inlay != null) drafts += inlay
+        handle = addInlay(editor, endLine, false, host, Int.MAX_VALUE)
+        if (handle != null) drafts += handle
         composer.focusText()
     }
 
@@ -422,7 +457,7 @@ class DiffReviewController(
     }
 
     private class HunkRenderer(val key: String, val viewed: Boolean, val onClick: () -> Unit) : GutterIconRenderer() {
-        override fun getIcon(): Icon = if (viewed) AllIcons.RunConfigurations.TestPassed else AllIcons.RunConfigurations.TestNotRan
+        override fun getIcon(): Icon = ViewedIcon(viewed)
         override fun getTooltipText() = if (viewed) "Hunk reviewed. Click to unmark" else "Mark this hunk as reviewed"
         override fun getClickAction(): AnAction = object : DumbAwareAction() {
             override fun actionPerformed(e: AnActionEvent) = onClick()
@@ -431,5 +466,43 @@ class DiffReviewController(
         override fun getAlignment() = Alignment.RIGHT
         override fun equals(other: Any?) = other is HunkRenderer && other.key == key && other.viewed == viewed
         override fun hashCode() = key.hashCode() * 31 + viewed.hashCode()
+    }
+}
+
+/** Invisible gutter-lane placeholder: keeps the "+" lane reserved so the gutter never changes width on hover. */
+private object LaneSpacer : GutterIconRenderer() {
+    override fun getIcon(): Icon = com.intellij.util.ui.EmptyIcon.create(AllIcons.General.InlineAdd)
+    override fun getAlignment() = Alignment.LEFT
+    override fun equals(other: Any?) = other === this
+    override fun hashCode() = 1
+}
+
+/** A checkbox: empty outline when not reviewed, green with a tick when reviewed. */
+private class ViewedIcon(private val viewed: Boolean) : Icon {
+    override fun getIconWidth() = JBUI.scale(14)
+    override fun getIconHeight() = JBUI.scale(14)
+    override fun paintIcon(c: java.awt.Component?, g: java.awt.Graphics, x: Int, y: Int) {
+        val g2 = g.create() as java.awt.Graphics2D
+        try {
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON)
+            val s = iconWidth
+            val arc = JBUI.scale(4)
+            if (viewed) {
+                g2.color = com.intellij.ui.JBColor(java.awt.Color(0x3E9B4F), java.awt.Color(0x4EA55F))
+                g2.fillRoundRect(x, y, s, s, arc, arc)
+                g2.color = java.awt.Color.WHITE
+                g2.stroke = java.awt.BasicStroke(JBUI.scale(2).toFloat(), java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND)
+                g2.drawPolyline(
+                    intArrayOf(x + s * 22 / 100, x + s * 42 / 100, x + s * 78 / 100),
+                    intArrayOf(y + s * 52 / 100, y + s * 72 / 100, y + s * 28 / 100), 3,
+                )
+            } else {
+                g2.color = com.intellij.ui.JBColor(java.awt.Color(0x8C8C8C), java.awt.Color(0x8A8A8A))
+                g2.stroke = java.awt.BasicStroke(JBUI.scale(1).toFloat() * 1.3f)
+                g2.drawRoundRect(x, y, s - 1, s - 1, arc, arc)
+            }
+        } finally {
+            g2.dispose()
+        }
     }
 }

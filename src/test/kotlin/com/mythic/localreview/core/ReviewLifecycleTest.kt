@@ -151,4 +151,19 @@ class ReviewLifecycleTest {
         ReviewUpdater.update(store, repo.git)
         assertTrue(store.comment(cm.id)!!.outdated)
     }
+
+    @Test
+    fun lastOpenedPointerSurvivesAndIgnoresMissingReviews() {
+        val (_, repository, store) = setup()
+        assertNull(repository.lastOpened("proj"))
+        repository.rememberLastOpened("proj", store.dir)
+        assertEquals(store.dir, repository.lastOpened("proj"))
+        assertNull(repository.lastOpened("other-project"))
+        repository.rememberLastOpened("proj", null)
+        assertNull(repository.lastOpened("proj"), "explicit close clears the pointer")
+        repository.rememberLastOpened("proj", store.dir.resolve("gone"))
+        assertNull(repository.lastOpened("proj"), "pointer to a missing review is ignored")
+        // The pointer folder must not be mistaken for a repo of reviews.
+        assertEquals(1, repository.list(store.review().repo).size)
+    }
 }

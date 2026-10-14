@@ -1,6 +1,5 @@
 package com.mythic.localreview.ui
 
-import com.intellij.ide.util.PropertiesComponent
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
@@ -128,7 +127,7 @@ class ReviewService(private val project: Project) : Disposable {
     }
 
     /** Recomputes the file list for the store's current revision (git diff) and publishes it. */
-    private fun activate(store: ReviewStore, root: Path) {
+    internal fun activate(store: ReviewStore, root: Path) {
         val git = gitFor(root)
         val rev = store.review().current
         val changes = git.diffRaw(rev.effectiveBaseSha, rev.headSha).sortedBy { it.path }
@@ -140,22 +139,33 @@ class ReviewService(private val project: Project) : Disposable {
         store.removeListener(storeListener)
         store.addListener(storeListener)
         active = ActiveReview(store, git, changes)
-        PropertiesComponent.getInstance(project).setValue(LAST_REVIEW_KEY, store.dir.toString())
+        remember(store.dir)
         store.problems.forEach { notify("Review data problem: $it", NotificationType.WARNING) }
         fire(ReviewListener.Kind.ACTIVE)
+    }
+
+    private fun projectKey() = project.basePath ?: project.name
+
+    /** Persisted beside the reviews (atomic write), so it survives IDE crashes and forced kills. */
+    private fun remember(dir: Path?) {
+        try {
+            repository().rememberLastOpened(projectKey(), dir)
+        } catch (e: java.io.IOException) {
+            notify("Could not remember the open review: ${e.message}", NotificationType.WARNING)
+        }
     }
 
     fun close() {
         active?.store?.let { it.removeListener(storeListener); it.close() }
         active = null
-        PropertiesComponent.getInstance(project).unsetValue(LAST_REVIEW_KEY)
+        remember(null)
         fire(ReviewListener.Kind.ACTIVE)
     }
 
     /** Reopens the review that was active when the project was last used (background). */
     fun restoreLast() {
-        val dir = PropertiesComponent.getInstance(project).getValue(LAST_REVIEW_KEY) ?: return
-        val summary = listReviews().firstOrNull { it.dir.toString() == dir } ?: return
+        val dir = repository().lastOpened(projectKey())?.normalize() ?: return
+        val summary = listReviews().firstOrNull { it.dir.normalize() == dir } ?: return
         try {
             open(summary)
         } catch (e: Exception) {
@@ -179,7 +189,6 @@ class ReviewService(private val project: Project) : Disposable {
     }
 
     companion object {
-        private const val LAST_REVIEW_KEY = "localreview.lastReviewDir"
         fun getInstance(project: Project): ReviewService = project.getService(ReviewService::class.java)
     }
 }

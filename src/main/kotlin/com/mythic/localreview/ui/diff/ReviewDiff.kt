@@ -50,7 +50,7 @@ object ReviewDiff {
     }
 }
 
-private class FileDiffProducer(
+internal class FileDiffProducer(
     private val project: Project,
     private val review: ActiveReview,
     private val change: FileChange,
