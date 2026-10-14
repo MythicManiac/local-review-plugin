@@ -19,6 +19,7 @@ import com.intellij.util.ui.JBUI
 import com.mythic.localreview.core.GitException
 import com.mythic.localreview.core.GroupInfo
 import com.mythic.localreview.core.ReviewGroups
+import com.mythic.localreview.core.SshKeys
 import com.mythic.localreview.core.SyncResult
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.ui.Messages
@@ -82,7 +83,7 @@ class NewReviewDialog(private val project: Project, private val service: ReviewS
 
     private fun newGroup() {
         val d = CreateGroupDialog(project)
-        if (d.showAndGet() && createGroupModal(project, service, d.groupName, d.remoteUrl)) loadGroups(d.groupName)
+        if (d.showAndGet() && createGroupModal(project, service, d.groupName, d.remoteUrl, d.sshKey)) loadGroups(d.groupName)
     }
 
     private fun loadRefs() {
@@ -194,8 +195,8 @@ fun <T> runModal(project: Project, title: String, block: () -> T): Result<T> {
 }
 
 /** Creates a group (attaching/downloading its remote when given), reporting errors in a dialog. */
-fun createGroupModal(project: Project, service: ReviewService, name: String, remoteUrl: String?): Boolean {
-    val r = runModal(project, "Creating review group") { service.groups().create(name, remoteUrl) }
+fun createGroupModal(project: Project, service: ReviewService, name: String, remoteUrl: String?, sshKey: String?): Boolean {
+    val r = runModal(project, "Creating review group") { service.groups().create(name, remoteUrl, sshKey) }
     r.exceptionOrNull()?.let {
         Messages.showErrorDialog(project, it.message ?: it.toString(), "Could Not Create Group")
         return false
@@ -225,8 +226,11 @@ class CreateGroupDialog(project: Project) : DialogWrapper(project) {
         emptyText.text = "Optional, e.g. git@github.com:me/my-reviews.git"
     }
 
+    private val key = SshKeyPicker(project)
+
     val groupName: String get() = name.text.trim()
     val remoteUrl: String? get() = remote.text.trim().ifEmpty { null }
+    val sshKey: String? get() = key.selected()
 
     init {
         title = "New Review Group"
@@ -236,6 +240,7 @@ class CreateGroupDialog(project: Project) : DialogWrapper(project) {
     override fun createCenterPanel(): JComponent = FormBuilder.createFormBuilder()
         .addLabeledComponent("Name:", name)
         .addLabeledComponent("Remote (optional):", remote)
+        .addLabeledComponent("SSH key for the remote:", key)
         .addComponent(
             com.intellij.ui.components.JBLabel(
                 "<html>A group is one git repository holding the reviews of any number of projects.<br>" +
@@ -261,6 +266,7 @@ class ManageGroupsDialog(private val project: Project, private val service: Revi
     private val list = JBList(model)
     private val auto = JBCheckBox("Auto-sync this group")
     private val setRemoteBtn = javax.swing.JButton("Set Remote…")
+    private val sshKeyBtn = javax.swing.JButton("SSH Key…")
     private val syncBtn = javax.swing.JButton("Sync Now")
 
     init {
@@ -269,6 +275,7 @@ class ManageGroupsDialog(private val project: Project, private val service: Revi
             override fun customizeCellRenderer(l: JList<out GroupInfo>, g: GroupInfo, i: Int, sel: Boolean, focus: Boolean) {
                 append(g.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                 append("   " + (g.remoteUrl ?: "local only"), SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                g.sshKey?.let { append("   key: ${it.substringAfterLast('/')}", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES) }
                 val st = sync.status(g.name)
                 if (g.remoteUrl != null && st != null) {
                     when (val r = st.result) {
@@ -286,6 +293,7 @@ class ManageGroupsDialog(private val project: Project, private val service: Revi
             refresh(g.name)
         }
         setRemoteBtn.addActionListener { setRemote() }
+        sshKeyBtn.addActionListener { setSshKey() }
         syncBtn.addActionListener { syncNow() }
         refresh(null)
         init()
@@ -304,6 +312,7 @@ class ManageGroupsDialog(private val project: Project, private val service: Revi
     private fun updateButtons() {
         val g = list.selectedValue
         setRemoteBtn.isEnabled = g != null
+        sshKeyBtn.isEnabled = g != null
         syncBtn.isEnabled = g?.remoteUrl != null
         auto.isEnabled = g?.remoteUrl != null
         auto.isSelected = g?.autoSync ?: false
@@ -311,7 +320,7 @@ class ManageGroupsDialog(private val project: Project, private val service: Revi
 
     private fun newGroup() {
         val d = CreateGroupDialog(project)
-        if (d.showAndGet() && createGroupModal(project, service, d.groupName, d.remoteUrl)) refresh(d.groupName)
+        if (d.showAndGet() && createGroupModal(project, service, d.groupName, d.remoteUrl, d.sshKey)) refresh(d.groupName)
     }
 
     private fun setRemote() {
@@ -323,6 +332,16 @@ class ManageGroupsDialog(private val project: Project, private val service: Revi
         r.exceptionOrNull()?.let { Messages.showErrorDialog(project, it.message ?: it.toString(), "Local Review"); return }
         refresh(g.name)
         if (url.isNotBlank()) syncNow()
+    }
+
+    private fun setSshKey() {
+        val g = list.selectedValue ?: return
+        val d = SshKeyDialog(project, g)
+        if (!d.showAndGet()) return
+        val r = runModal(project, "Updating SSH key") { service.groups().setSshKey(g.name, d.key) }
+        r.exceptionOrNull()?.let { Messages.showErrorDialog(project, it.message ?: it.toString(), "Local Review"); return }
+        refresh(g.name)
+        if (g.remoteUrl != null) syncNow() // the usual reason to change the key: make the remote reachable
     }
 
     private fun syncNow() {
@@ -339,7 +358,7 @@ class ManageGroupsDialog(private val project: Project, private val service: Revi
         val buttons = JPanel().apply {
             layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
             val newBtn = javax.swing.JButton("New Group…").apply { addActionListener { newGroup() } }
-            for (c in listOf<JComponent>(newBtn, setRemoteBtn, syncBtn, auto)) {
+            for (c in listOf<JComponent>(newBtn, setRemoteBtn, sshKeyBtn, syncBtn, auto)) {
                 c.alignmentX = 0f
                 add(c)
                 add(javax.swing.Box.createVerticalStrut(JBUI.scale(6)))
@@ -361,4 +380,72 @@ fun ago(at: java.time.Instant): String {
         s < 86400 -> "${s / 3600} h ago"
         else -> "${s / 86400} d ago"
     }
+}
+
+
+/**
+ * Chooses the SSH private key a group uses to reach its remote: "default" (use the user's own git/ssh configuration),
+ * a key found in `~/.ssh`, or any file via Browse.
+ */
+class SshKeyPicker(private val project: Project?, initial: String? = null) : JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0)) {
+    private val combo = ComboBox<String>()
+
+    init {
+        val items = LinkedHashSet<String>()
+        items += ""
+        items += SshKeys.detect()
+        initial?.let { items += it }
+        combo.model = DefaultComboBoxModel(items.toTypedArray())
+        combo.selectedItem = initial ?: ""
+        combo.renderer = object : ColoredListCellRenderer<String>() {
+            override fun customizeCellRenderer(l: JList<out String>, v: String?, i: Int, sel: Boolean, focus: Boolean) {
+                if (v.isNullOrEmpty()) {
+                    append("Default (use my git/ssh configuration)")
+                } else {
+                    append(v.substringAfterLast('/'))
+                    append("   " + v.substringBeforeLast('/', ""), SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
+                }
+            }
+        }
+        val browse = javax.swing.JButton("Browse…").apply { addActionListener { browse() } }
+        add(combo)
+        add(browse)
+    }
+
+    private fun browse() {
+        val ssh = java.nio.file.Path.of(System.getProperty("user.home"), ".ssh")
+        val start = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByNioFile(ssh)
+        val d = com.intellij.openapi.fileChooser.FileChooserDescriptorFactory.createSingleFileDescriptor()
+            .withTitle("Select SSH Private Key").withShowHiddenFiles(true)
+        val f = com.intellij.openapi.fileChooser.FileChooser.chooseFile(d, project, start) ?: return
+        val path = f.path
+        if (!(0 until combo.itemCount).any { combo.getItemAt(it) == path }) combo.addItem(path)
+        combo.selectedItem = path
+    }
+
+    /** The chosen private key path, or null for "default". */
+    fun selected(): String? = (combo.selectedItem as String?)?.ifEmpty { null }
+}
+
+class SshKeyDialog(project: Project, group: GroupInfo) : DialogWrapper(project) {
+    private val picker = SshKeyPicker(project, group.sshKey)
+    private val groupName = group.name
+
+    val key: String? get() = picker.selected()
+
+    init {
+        title = "SSH Key for Group '$groupName'"
+        init()
+    }
+
+    override fun createCenterPanel(): JComponent = FormBuilder.createFormBuilder()
+        .addLabeledComponent("SSH key:", picker)
+        .addComponent(
+            com.intellij.ui.components.JBLabel(
+                "<html><body style='width: ${JBUI.scale(460)}px'>Used as <code>ssh -i &lt;key&gt;</code> only for this group's remote. It is saved in the " +
+                    "group's local git config on this machine (not synced), like a <code>core.sshCommand</code> include. Choose \"Default\" to rely on " +
+                    "your own git/ssh configuration. Keys that need a passphrase must be loaded in ssh-agent.</body></html>",
+            ).apply { foreground = com.intellij.ui.JBColor.GRAY },
+        )
+        .panel.apply { preferredSize = Dimension(JBUI.scale(560), preferredSize.height) }
 }

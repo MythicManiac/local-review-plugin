@@ -58,7 +58,7 @@ object GroupSync {
             }
             return SyncResult.Failed("The remote kept changing during sync; try again.")
         } catch (e: GitException) {
-            return SyncResult.Failed(e.message ?: "git failed")
+            return SyncResult.Failed(SshKeys.withHint(e.message ?: "git failed"))
         }
     }
 

@@ -15,7 +15,7 @@ import kotlin.io.path.name
 @Serializable
 data class GroupFile(val schemaVersion: Int = SCHEMA_VERSION, val id: String, val createdAt: String)
 
-data class GroupInfo(val name: String, val dir: Path, val remoteUrl: String?, val autoSync: Boolean)
+data class GroupInfo(val name: String, val dir: Path, val remoteUrl: String?, val autoSync: Boolean, val sshKey: String? = null)
 
 /**
  * All review groups under a store root. A **group is one git repository** holding the reviews of any number of projects
@@ -61,15 +61,16 @@ class ReviewGroups(
 
     private fun info(dir: Path): GroupInfo {
         val c = committer(dir)
-        return GroupInfo(dir.name, dir, c.remoteUrl(), c.autoSync())
+        return GroupInfo(dir.name, dir, c.remoteUrl(), c.autoSync(), c.sshKey())
     }
 
     /**
      * Creates a group. With [remoteUrl] the remote is attached and, if it already holds a group (created on another
      * device), its content is checked out; otherwise the group starts empty and the first sync publishes it.
+     * [sshKey] (path to a private key) is applied before the remote is contacted, for remotes that need a specific identity.
      * @throws IllegalArgumentException for an invalid or taken name; [GitException] if the remote cannot be reached.
      */
-    fun create(name: String, remoteUrl: String? = null): GroupInfo {
+    fun create(name: String, remoteUrl: String? = null, sshKey: String? = null): GroupInfo {
         val clean = name.trim()
         require(validName(clean)) { "Invalid group name '$name': use letters, digits, space, '.', '_' or '-' (max 64, not starting with '.')." }
         require(list().none { it.name.equals(clean, ignoreCase = true) }) { "A group named '$clean' already exists." }
@@ -78,6 +79,7 @@ class ReviewGroups(
         val c = committer(dir)
         try {
             c.ensureRepo()
+            if (sshKey != null) c.setSshKey(sshKey)
             if (remoteUrl != null) attach(c, remoteUrl)
             c.exclusive {
                 if (!dir.resolve(GROUP_FILE).exists()) {
@@ -91,7 +93,7 @@ class ReviewGroups(
             // The folder is brand new and ours: remove the half-made group so a retry starts clean.
             committers.remove(dir.toAbsolutePath().normalize())?.close()
             runCatching { dir.toFile().deleteRecursively() }
-            throw e
+            throw if (e is GitException) GitException(SshKeys.withHint(e.message.orEmpty()), e.exitCode) else e
         }
         return info(dir)
     }
@@ -114,6 +116,12 @@ class ReviewGroups(
     fun setRemote(name: String, url: String?) {
         val g = group(name) ?: throw IllegalArgumentException("No group '$name'")
         committer(g.dir).setRemote(url?.trim()?.ifEmpty { null })
+    }
+
+    /** Selects the SSH private key used for this group's remote; null = use the user's git/ssh configuration. */
+    fun setSshKey(name: String, keyPath: String?) {
+        val g = group(name) ?: throw IllegalArgumentException("No group '$name'")
+        committer(g.dir).setSshKey(keyPath?.trim()?.ifEmpty { null })
     }
 
     fun setAutoSync(name: String, enabled: Boolean) {

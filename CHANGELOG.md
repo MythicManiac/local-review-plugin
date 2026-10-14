@@ -6,6 +6,7 @@
   Groups can have a remote and **auto-sync between devices** (debounced after changes, on open, periodic, manual). Separate groups isolate
   projects/organisations (own history and remote).
 * Conflict-safe merging: concurrent edits of the same file keep both versions (`*.conflict-*`) and converge on all devices.
+* **Per-group SSH key** for the sync remote (key picker with `~/.ssh` detection, stored as the group repo's local `core.sshCommand`); hints on authentication failures.
 * Reviews synced from another device open with a warning if their commits are not available locally.
 * New: Manage Review Groups dialog, Sync Review Group action, group picker in New Review, group and sync state in the header.
 * Automatic one-time migration of the previous per-review layout into the `default` group (old histories kept in `.legacy/`).

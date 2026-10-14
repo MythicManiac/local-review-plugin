@@ -89,6 +89,42 @@ class GitCommitter(
         synchronized(lock) { git.run("config", "--local", "localreview.autosync", enabled.toString()) }
     }
 
+    // ---- ssh key (per group, per machine; mirrors `includeIf` + `core.sshCommand` setups) ----------------------------
+
+    /** The key selected for this group (`localreview.sshkey`), or null to leave it to the user's git/ssh configuration. */
+    fun sshKey(): String? = synchronized(lock) {
+        try {
+            git.run("config", "--local", "--get", "localreview.sshkey").trim().ifEmpty { null }
+        } catch (e: GitException) {
+            null
+        }
+    }
+
+    /**
+     * Selects the SSH identity used to reach this group's remote by writing `core.sshCommand` into the repo's own config
+     * (so plain `git` in the folder behaves the same). `IdentitiesOnly` stops ssh from offering other keys; `BatchMode`
+     * makes a missing passphrase/agent fail fast instead of hanging. null clears the selection, leaving a hand-written
+     * `core.sshCommand` untouched.
+     * @throws IllegalArgumentException if the key file does not exist or the path cannot be quoted safely.
+     */
+    fun setSshKey(path: String?) {
+        synchronized(lock) {
+            if (path == null) {
+                if (sshKey() != null) {
+                    git.run("config", "--local", "--unset", "localreview.sshkey")
+                    git.run("config", "--local", "--unset-all", "core.sshCommand", okExitCodes = setOf(0, 5))
+                }
+                return
+            }
+            val key = SshKeys.normalize(path)
+            require(Files.isRegularFile(Path.of(key))) { "SSH key file not found: $key" }
+            require(!key.endsWith(".pub")) { "Select the private key, not the .pub file." }
+            require('\'' !in key && '"' !in key) { "Quotes in the key path are not supported." }
+            git.run("config", "--local", "localreview.sshkey", key)
+            git.run("config", "--local", "core.sshCommand", SshKeys.command(key))
+        }
+    }
+
     // ---- committing -------------------------------------------------------------------------------------------
 
     fun request(message: String) {

@@ -34,6 +34,9 @@ on every change, holding the reviews of as many projects as you like (`<group>/<
 
 * **Sync between devices:** *Manage Review Groups…* → select the group → *Set Remote…* (any git remote, e.g. a private GitHub repo). It then syncs automatically (after changes,
   when you open a review, every few minutes) or on demand (*Sync Review Group*). On another device, create a group with the same remote and everything appears; no per-review setup.
+* **SSH keys per group:** *Manage Review Groups… → SSH Key…* (or when creating a group) picks the private key used to reach that group's remote. Keys found in `~/.ssh` are listed, or Browse. It is stored as
+  `core.sshCommand = ssh -i <key> -o IdentitiesOnly=yes -o BatchMode=yes` in that group's *own* `.git/config` (this machine only, never synced). That is the same mechanism as an `includeIf` + `core.sshCommand` setup, so different
+  groups can use different identities. "Default" leaves it to your own git/ssh configuration. Keys with a passphrase must be loaded in ssh-agent (`BatchMode` fails fast instead of hanging).
 * **Isolation:** create separate groups (*New Review → New group…*) for work that must not share history or a remote, e.g. different organisations.
   Each group has its own history and remote; the New Review dialog remembers the group per project.
 * **Conflicts:** per-comment files make them rare; if the same file was edited on two devices the newer edit wins and the other version is kept as `*.conflict-*` (you get a notification).

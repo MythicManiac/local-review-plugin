@@ -91,6 +91,11 @@ What we reuse instead (all public, stable-or-widely-used platform APIs):
 * **Group = repo.** Each group has its own history, its own remote and its own sync state; nothing is shared between groups,
   which is the isolation boundary. The remote URL is the repo's `origin`, so plain `git` works on it; the per-machine
   *auto-sync* switch is `git config localreview.autosync` (default on once a remote exists; never synced).
+* **SSH identity per group** (`localreview.sshkey` + `core.sshCommand` in the group's `.git/config`): lets setups where the
+  user's git config only selects a key by project path (`includeIf gitdir:` + `core.sshCommand`) reach each group's remote with the
+  right key, since groups live under the store folder that no such include matches. Set before the first contact with the
+  remote (also at group creation), applied by plain git as well, per machine, never synced. Clearing removes only what the
+  plugin wrote; a hand-written `core.sshCommand` is left alone. Auth/host-key failures name the setting to fix.
 * A new review asks for its group (default: the one last used for that project, else `default`). Creating a group with
   a remote that already holds a group (made on another device) downloads it.
 * **Migration:** the previous layout (`<root>/<repo>/<id>/`, one git repo per review) is imported into the `default` group on
