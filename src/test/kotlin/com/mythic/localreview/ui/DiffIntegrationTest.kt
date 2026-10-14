@@ -56,7 +56,7 @@ class DiffIntegrationTest : BasePlatformTestCase() {
         repo.commit("work")
 
         val service = ReviewService.getInstance(project)
-        val store = ReviewRepository(tempDir()).create(repo.git, "T", "master", "feature")
+        val store = ReviewRepository(tempDir(), "g", null).create(repo.git, "T", "master", "feature")
         service.activate(store, repo.dir)
         val review = service.active!!
         val change = review.changes.single()
@@ -115,7 +115,7 @@ class DiffIntegrationTest : BasePlatformTestCase() {
         repo.commit("work")
 
         val service = ReviewService.getInstance(project)
-        val store = ReviewRepository(tempDir()).create(repo.git, "T", "master", "feature")
+        val store = ReviewRepository(tempDir(), "g", null).create(repo.git, "T", "master", "feature")
         service.activate(store, repo.dir)
         val review = service.active!!
         val change = review.changes.single()

@@ -15,6 +15,7 @@ import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import com.mythic.localreview.core.Comment
 import com.mythic.localreview.core.CommentStatus
+import com.mythic.localreview.core.SyncResult
 import com.mythic.localreview.core.FileChange
 import com.mythic.localreview.ui.diff.ReviewDiff
 import java.awt.BorderLayout
@@ -82,9 +83,27 @@ class ReviewPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
         val saved = if (warn == null) "<span style='color:#59a869'>✓ saved</span>"
         else "<span style='color:#d9a343'>✓ saved to disk · git history: ${warn.take(80).replace("<", "&lt;")}</span>"
         fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;")
+        val sync = GroupSyncService.getInstance()
+        val g = a.group
+        val info = service.groupInfo
+        val syncText = when {
+            g == null -> ""
+            info?.remoteUrl == null -> " · group <b>${esc(g)}</b> · <span style='color:gray'>local only</span>"
+            sync.isSyncing(g) -> " · group <b>${esc(g)}</b> · <span style='color:gray'>⇅ syncing…</span>"
+            else -> {
+                val st = sync.status(g)
+                val state = when (val res = st?.result) {
+                    is SyncResult.Ok -> "<span style='color:#59a869'>⇅ synced ${ago(st.at)}</span>"
+                    is SyncResult.Failed -> "<span style='color:#d9a343'>⚠ sync failed (${esc(res.message.take(60))})</span>"
+                    else -> "<span style='color:gray'>⇅ not synced yet</span>"
+                }
+                " · group <b>${esc(g)}</b> · $state" + if (!info.autoSync) " <span style='color:gray'>(auto-sync off)</span>" else ""
+            }
+        }
+        val problem = a.problem?.let { "<br><span style='color:#d9a343'>⚠ ${esc(it)}</span>" } ?: ""
         status.text = "<html><b>${esc(r.title)}</b>" +
             "<br><span style='color:gray'>${esc(r.baseRef)} (${rev.effectiveBaseSha.take(7)}) → ${esc(r.headRef)} (${rev.headSha.take(7)}) · revision ${rev.n}</span>" +
-            "<br>$open open comments · $saved</html>"
+            "<br>$open open comments · $saved$syncText$problem</html>"
     }
 
     override fun uiDataSnapshot(sink: DataSink) {}

@@ -34,6 +34,12 @@
       <action id="LocalReview.UpdateReview" class="com.mythic.localreview.ui.UpdateReviewAction"
               text="Update Review" description="Re-resolve base/head refs, pin the new commits and re-anchor comments"
               icon="AllIcons.Actions.Refresh"/>
+      <action id="LocalReview.SyncGroup" class="com.mythic.localreview.ui.SyncGroupAction"
+              text="Sync Review Group" description="Sync this review's group with its remote now"
+              icon="AllIcons.Vcs.Fetch"/>
+      <action id="LocalReview.ManageGroups" class="com.mythic.localreview.ui.ManageGroupsAction"
+              text="Manage Review Groups..." description="Create groups, set a remote to sync between devices, toggle auto-sync"
+              icon="AllIcons.General.GearPlain"/>
       <separator/>
       <action id="LocalReview.OpenDiff" class="com.mythic.localreview.ui.OpenFirstDiffAction"
               text="Open Diff" description="Open the diff viewer on the first file not yet reviewed"

@@ -22,7 +22,7 @@ class ReviewLifecycleTest {
         repo.delete("src/gone.txt")
         repo.mv("src/old.txt", "moved/old.txt")
         repo.commit("feature work")
-        val repository = ReviewRepository(tempDir())
+        val repository = ReviewRepository(tempDir(), "g", null)
         val store = repository.create(repo.git, "Feature A vs master", "master", "feature")
         return Triple(repo, repository, store)
     }
@@ -150,20 +150,5 @@ class ReviewLifecycleTest {
         repo.commit("remove")
         ReviewUpdater.update(store, repo.git)
         assertTrue(store.comment(cm.id)!!.outdated)
-    }
-
-    @Test
-    fun lastOpenedPointerSurvivesAndIgnoresMissingReviews() {
-        val (_, repository, store) = setup()
-        assertNull(repository.lastOpened("proj"))
-        repository.rememberLastOpened("proj", store.dir)
-        assertEquals(store.dir, repository.lastOpened("proj"))
-        assertNull(repository.lastOpened("other-project"))
-        repository.rememberLastOpened("proj", null)
-        assertNull(repository.lastOpened("proj"), "explicit close clears the pointer")
-        repository.rememberLastOpened("proj", store.dir.resolve("gone"))
-        assertNull(repository.lastOpened("proj"), "pointer to a missing review is ignored")
-        // The pointer folder must not be mistaken for a repo of reviews.
-        assertEquals(1, repository.list(store.review().repo).size)
     }
 }

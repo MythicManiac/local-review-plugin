@@ -48,3 +48,12 @@ class TestRepo(val dir: Path = Files.createTempDirectory("lr-repo")) {
 fun tempDir(): Path = Files.createTempDirectory("lr-store")
 
 fun lines(vararg l: String) = l.joinToString("\n", postfix = "\n")
+
+/** A bare git repository acting as the shared remote of a review group. */
+fun bareRemote(): Path {
+    val dir = Files.createTempDirectory("lr-remote")
+    val git = GitCli(dir)
+    git.run("init", "-q", "--bare")
+    git.run("symbolic-ref", "HEAD", "refs/heads/main")
+    return dir
+}

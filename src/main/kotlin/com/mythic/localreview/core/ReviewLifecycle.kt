@@ -9,13 +9,13 @@ import kotlin.io.path.exists
 import kotlin.io.path.isDirectory
 import kotlin.io.path.name
 
-data class ReviewSummary(val dir: Path, val review: Review)
+data class ReviewSummary(val dir: Path, val review: Review, val group: String)
 
-/** The folder tree of all reviews: `<root>/<repo-name>/<review-id>/`. */
-class ReviewRepository(val root: Path, private val gitExe: String = "git") {
+/** The reviews of one group: `<group-dir>/<repo-name>/<review-id>/`. All stores share the group's [committer]. */
+class ReviewRepository(val root: Path, val groupName: String, private val committer: GitCommitter?) {
 
-    /** Reviews belonging to [repo] (matched by normalised remote URL if both have one, else by repo name). */
-    fun list(repo: RepoInfo): List<ReviewSummary> {
+    /** Reviews belonging to [repo] (matched by normalised remote URL if both have one, else by repo name); null = all. */
+    fun list(repo: RepoInfo?): List<ReviewSummary> {
         if (!root.isDirectory()) return emptyList()
         val out = ArrayList<ReviewSummary>()
         Files.list(root).use { repos ->
@@ -23,7 +23,7 @@ class ReviewRepository(val root: Path, private val gitExe: String = "git") {
                 Files.list(repoDir).use { reviews ->
                     reviews.filter { it.resolve(ReviewStore.REVIEW_FILE).exists() }.forEach { d ->
                         val r = ReviewStore.readReviewOrNull(d) ?: return@forEach
-                        if (sameRepo(r.repo, repo)) out += ReviewSummary(d, r)
+                        if (repo == null || sameRepo(r.repo, repo)) out += ReviewSummary(d, r, groupName)
                     }
                 }
             }
@@ -31,34 +31,10 @@ class ReviewRepository(val root: Path, private val gitExe: String = "git") {
         return out.sortedByDescending { it.review.createdAt }
     }
 
-    private fun sameRepo(a: RepoInfo, b: RepoInfo): Boolean {
-        val ua = a.remoteUrl?.let(::normalizeUrl)
-        val ub = b.remoteUrl?.let(::normalizeUrl)
-        return if (ua != null && ub != null) ua == ub else a.name == b.name
-    }
-
-    private fun normalizeUrl(u: String) = u.trim().removeSuffix("/").removeSuffix(".git").lowercase()
-
-    fun open(summary: ReviewSummary): ReviewStore = ReviewStore.open(summary.dir, GitCommitter(summary.dir, gitExe))
-
-    // ---- per-project "last opened review" pointer, stored beside the reviews so it survives crashes ----------
-
-    private fun pointerFile(projectKey: String): Path =
-        root.resolve(".state").resolve("last-opened").resolve(Fingerprints.pathKey(projectKey) + ".txt")
-
-    /** Records which review the project had open; null = none (explicitly closed). */
-    fun rememberLastOpened(projectKey: String, reviewDir: Path?) =
-        AtomicFiles.write(pointerFile(projectKey), (reviewDir?.toString() ?: "").toByteArray(Charsets.UTF_8))
-
-    fun lastOpened(projectKey: String): Path? = try {
-        Files.readString(pointerFile(projectKey)).trim().takeIf { it.isNotEmpty() }?.let { Path.of(it) }
-            ?.takeIf { it.resolve(ReviewStore.REVIEW_FILE).exists() }
-    } catch (e: java.io.IOException) {
-        null
-    }
+    fun open(summary: ReviewSummary): ReviewStore = ReviewStore.open(summary.dir, committer)
 
     /**
-     * Resolves the refs in [repoGit]'s repository, pins them, and creates the review folder.
+     * Resolves the refs in [repoGit]'s repository, pins them, and creates the review folder in this group.
      * @throws GitException if a ref cannot be resolved.
      */
     fun create(
@@ -78,7 +54,7 @@ class ReviewRepository(val root: Path, private val gitExe: String = "git") {
             mergeBase = mergeBase, revisions = listOf(revision), createdAt = now.toString(), updatedAt = now.toString(),
         )
         val dir = root.resolve(sanitize(repo.name)).resolve(review.id)
-        return ReviewStore.create(dir, review, GitCommitter(dir, gitExe), clock)
+        return ReviewStore.create(dir, review, committer, clock)
     }
 
     private fun uniqueId(repoName: String, title: String, now: Instant): String {
@@ -95,6 +71,17 @@ class ReviewRepository(val root: Path, private val gitExe: String = "git") {
             s.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').take(50).ifEmpty { "review" }
 
         fun sanitize(s: String): String = s.replace(Regex("[^A-Za-z0-9._-]+"), "_").ifEmpty { "repo" }
+
+        fun sameRepo(a: RepoInfo, b: RepoInfo): Boolean {
+            val ua = a.remoteUrl?.let(::normalizeUrl)
+            val ub = b.remoteUrl?.let(::normalizeUrl)
+            return if (ua != null && ub != null) ua == ub else a.name == b.name
+        }
+
+        fun normalizeUrl(u: String) = u.trim().removeSuffix("/").removeSuffix(".git").lowercase()
+
+        /** Stable key identifying a repository across devices: its normalised remote URL, else its folder name. */
+        fun repoKey(r: RepoInfo): String = r.remoteUrl?.let(::normalizeUrl) ?: "name:${r.name}"
 
         fun resolveRevision(git: GitCli, baseRef: String, headRef: String, mergeBase: Boolean, n: Int, at: String): Revision {
             val base = git.resolveCommit(baseRef)

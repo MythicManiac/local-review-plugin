@@ -73,7 +73,7 @@ class NewReviewAction : ReviewAction() {
         }
         val dlg = NewReviewDialog(project, service)
         if (!dlg.showAndGet()) return
-        runInBackground(project, "Creating review") { service.create(dlg.root, dlg.reviewTitle, dlg.baseRef, dlg.headRef, dlg.useMergeBase) }
+        runInBackground(project, "Creating review") { service.create(dlg.root, dlg.reviewTitle, dlg.baseRef, dlg.headRef, dlg.useMergeBase, dlg.groupName) }
     }
 }
 
@@ -92,6 +92,7 @@ class OpenReviewAction : ReviewAction() {
                     .setTitle("Open Review")
                     .setRenderer(object : com.intellij.ui.ColoredListCellRenderer<ReviewSummary>() {
                         override fun customizeCellRenderer(l: JList<out ReviewSummary>, v: ReviewSummary, i: Int, s: Boolean, f: Boolean) {
+                            append("[${v.group}] ", com.intellij.ui.SimpleTextAttributes.GRAYED_ATTRIBUTES)
                             append(v.review.title)
                             append("   ${v.review.baseRef} → ${v.review.headRef} · rev ${v.review.current.n} · ${v.review.createdAt.take(10)}", com.intellij.ui.SimpleTextAttributes.GRAYED_ATTRIBUTES)
                         }
@@ -287,6 +288,29 @@ class CommentOnSelectedFileAction : ReviewAction("Add Comment on File…") {
             a.store.addComment(dlg.kind, dlg.text, Anchor(AnchorScope.FILE, c.newPath ?: c.oldPath, side, revision = a.store.review().current.n), dlg.rule)
         } catch (ex: IOException) {
             ReviewService.getInstance(project).notify("Could not save: ${ex.message}", NotificationType.ERROR)
+        }
+    }
+}
+
+
+class ManageGroupsAction : ReviewAction() {
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        ManageGroupsDialog(project, ReviewService.getInstance(project)).show()
+    }
+}
+
+class SyncGroupAction : NeedsReviewAction() {
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        val service = ReviewService.getInstance(project)
+        val group = service.active?.group ?: return
+        runInBackground(project, "Syncing review group") {
+            val r = GroupSyncService.getInstance().syncNow(group)
+            service.notify(
+                describe(r, group),
+                if (r is com.mythic.localreview.core.SyncResult.Failed) NotificationType.ERROR else NotificationType.INFORMATION,
+            )
         }
     }
 }

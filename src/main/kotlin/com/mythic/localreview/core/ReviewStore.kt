@@ -188,8 +188,12 @@ class ReviewStore private constructor(
 
     // ---- io -----------------------------------------------------------------------------------------------
 
-    private fun writeJson(relative: String, json: String) =
-        AtomicFiles.write(dir.resolve(relative), (json + "\n").toByteArray(Charsets.UTF_8))
+    private fun writeJson(relative: String, json: String) {
+        val bytes = (json + "\n").toByteArray(Charsets.UTF_8)
+        val target = dir.resolve(relative)
+        // Held against sync merges so a half-merged tree is never written into.
+        if (committer != null) committer.exclusive { AtomicFiles.write(target, bytes) } else AtomicFiles.write(target, bytes)
+    }
 
     private fun committed(message: String) {
         committer?.request(message)
@@ -202,11 +206,38 @@ class ReviewStore private constructor(
     /** Records files written into the review folder outside the store's own mutations (e.g. exports) in git history. */
     fun commitExternalChanges(message: String) { committer?.request(message) }
 
-    fun close() { committer?.close() }
+    /** Flushes pending history. The committer is shared by the whole group and stays alive. */
+    fun close() { committer?.flush() }
 
     private fun load() {
         loadDir(COMMENTS_DIR, Comment.serializer()) { comments[it.id] = it }
         loadDir(PROGRESS_DIR, FileProgress.serializer()) { progress[it.path] = it }
+        // Sync conflicts keep the losing version next to the winner as `<file>.conflict-<device>-<time>`; surface them.
+        for (d in listOf(dir.resolve(COMMENTS_DIR), dir.resolve(PROGRESS_DIR), dir)) {
+            if (!d.exists()) continue
+            Files.list(d).use { s ->
+                s.filter { it.name.contains(".conflict-") }.sorted().forEach {
+                    _problems += "Sync conflict: both versions were kept; the other one is ${it.name}"
+                }
+            }
+        }
+    }
+
+    /** Re-reads everything from disk, e.g. after a sync pulled changes from another device. */
+    fun reload() {
+        synchronized(lock) {
+            val file = dir.resolve(REVIEW_FILE)
+            review = try {
+                StoreJson.decodeFromString(Review.serializer(), Files.readString(file))
+            } catch (e: Exception) {
+                throw ReviewCorruptException("Cannot read $file: ${e.message}", e)
+            }
+            comments.clear()
+            progress.clear()
+            _problems.clear()
+            load()
+        }
+        fire()
     }
 
     private fun <T> loadDir(sub: String, ser: kotlinx.serialization.KSerializer<T>, sink: (T) -> Unit) {
