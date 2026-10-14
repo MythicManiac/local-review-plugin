@@ -1,0 +1,19 @@
+<idea-plugin>
+  <id>com.mythic.localreview</id>
+  <name>Local Review</name>
+  <vendor>Mythic</vendor>
+  <description><![CDATA[
+    Review local git changes (e.g. AI-authored branches) before pushing them for remote PR review.
+    Annotate code, track progress per file and hunk, export reports and agent prompts, and propose AGENTS.md rules.
+  ]]></description>
+
+  <depends>com.intellij.modules.platform</depends>
+  <depends>Git4Idea</depends>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <toolWindow id="Local Review"
+                anchor="right"
+                icon="AllIcons.Vcs.Merge"
+                factoryClass="com.mythic.localreview.ui.ReviewToolWindowFactory"/>
+  </extensions>
+</idea-plugin>
