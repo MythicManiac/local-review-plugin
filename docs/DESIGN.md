@@ -1,4 +1,4 @@
-# Local Review — Design
+# Local Diff Review — Design
 
 A JetBrains IDE plugin (developed against PyCharm, usable in any IntelliJ-platform IDE with the Git plugin)
 for reviewing **local** git changes — typically AI-authored — before they are pushed for human review.
@@ -127,7 +127,7 @@ allowed, so two machines that each started a local group can later be connected)
    keeps the draft open.
 3. **Nothing is ever deleted.** Removing a comment sets `deletedAt`; the UI offers *Show deleted* / *Restore*.
 4. After each write an asynchronous, coalesced `git add -A && git commit` runs in the group repo (identity falls back to
-   `Local Review <local-review@localhost>` if none configured). Commit failure never loses data (files are already
+   `Local Diff Review <local-review@localhost>` if none configured). Commit failure never loses data (files are already
    durable) and is reported in the status bar widget / tool window.
 5. Renames over the target are retried briefly on Windows sharing violations (our own background `git add`, antivirus).
 6. On load, unreadable/corrupt files are quarantined (renamed `*.corrupt`) and reported — never silently dropped.

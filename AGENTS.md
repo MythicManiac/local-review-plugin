@@ -11,3 +11,5 @@ Kotlin JetBrains plugin; see `docs/DESIGN.md` (decisions) and `docs/PLAN.md` (st
 * Smoke the UI with `./gradlew runIde -PdemoProject=<repo>`; headless diff-viewer behaviour is covered by `DiffIntegrationTest`.
 * Verify IDE API shapes against the installed distribution/sources, not memory (IDE build 262 is newer than most docs).
 * Update `docs/PLAN.md` status and commit at the end of each phase.
+* Marketplace listing text lives in `docs/marketplace/` and `CHANGELOG.md` (both are build inputs); release steps in `docs/PUBLISHING.md`. Run `gradlew verifyPlugin` before releases and keep it free of deprecated/experimental API usage.
+* The plugin name is "Local Diff Review" (the Marketplace name "Local Review" is taken); the plugin ID `com.mythic.localreview` is permanent once published.

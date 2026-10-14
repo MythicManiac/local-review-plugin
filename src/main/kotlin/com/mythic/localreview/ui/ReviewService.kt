@@ -248,7 +248,7 @@ class ReviewService(private val project: Project) : Disposable {
     fun refreshUi() = fire(ReviewListener.Kind.DATA)
 
     fun notify(message: String, type: NotificationType = NotificationType.INFORMATION, vararg actions: Pair<String, () -> Unit>) {
-        val n = NotificationGroupManager.getInstance().getNotificationGroup("Local Review").createNotification(message, type)
+        val n = NotificationGroupManager.getInstance().getNotificationGroup("Local Diff Review").createNotification(message, type)
         for ((label, run) in actions) {
             n.addAction(com.intellij.notification.NotificationAction.createSimpleExpiring(label) { run() })
         }

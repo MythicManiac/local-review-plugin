@@ -55,7 +55,7 @@ class NewReviewDialog(private val project: Project, private val service: ReviewS
     val groupName: String get() = groupBox.selectedItem as String
 
     init {
-        title = "New Local Review"
+        title = "New Review"
         rootBox.addActionListener { loadRefs(); loadGroups(null) }
         loadRefs()
         loadGroups(null)
@@ -175,7 +175,7 @@ class AgentsMdDialog(private val project: Project, private val fileName: String,
 
     override fun createCenterPanel(): JComponent = JPanel(BorderLayout()).apply {
         add(diffPanel.component, BorderLayout.CENTER)
-        preferredSize = Dimension(JBUI.scale(900), JBUI.scale(520))
+        preferredSize = Dimension(JBUI.scale(1080), JBUI.scale(520))
     }
 
     override fun dispose() {
@@ -329,7 +329,7 @@ class ManageGroupsDialog(private val project: Project, private val service: Revi
             project, "Git remote URL for group '${g.name}' (leave empty to remove the remote):", "Set Remote", null, g.remoteUrl ?: "", null,
         ) ?: return
         val r = runModal(project, "Updating remote") { service.groups().setRemote(g.name, url) }
-        r.exceptionOrNull()?.let { Messages.showErrorDialog(project, it.message ?: it.toString(), "Local Review"); return }
+        r.exceptionOrNull()?.let { Messages.showErrorDialog(project, it.message ?: it.toString(), "Local Diff Review"); return }
         refresh(g.name)
         if (url.isNotBlank()) syncNow()
     }
@@ -339,7 +339,7 @@ class ManageGroupsDialog(private val project: Project, private val service: Revi
         val d = SshKeyDialog(project, g)
         if (!d.showAndGet()) return
         val r = runModal(project, "Updating SSH key") { service.groups().setSshKey(g.name, d.key) }
-        r.exceptionOrNull()?.let { Messages.showErrorDialog(project, it.message ?: it.toString(), "Local Review"); return }
+        r.exceptionOrNull()?.let { Messages.showErrorDialog(project, it.message ?: it.toString(), "Local Diff Review"); return }
         refresh(g.name)
         if (g.remoteUrl != null) syncNow() // the usual reason to change the key: make the remote reachable
     }
@@ -349,7 +349,7 @@ class ManageGroupsDialog(private val project: Project, private val service: Revi
         val r = runModal(project, "Syncing review group '${g.name}'") { sync.syncNow(g.name) }.getOrElse { SyncResult.Failed(it.message ?: it.toString()) }
         refresh(g.name)
         val text = describe(r, g.name)
-        if (r is SyncResult.Failed) Messages.showErrorDialog(project, text, "Local Review") else Messages.showInfoMessage(project, text, "Local Review")
+        if (r is SyncResult.Failed) Messages.showErrorDialog(project, text, "Local Diff Review") else Messages.showInfoMessage(project, text, "Local Diff Review")
     }
 
     override fun createActions() = arrayOf(okAction.also { it.putValue(javax.swing.Action.NAME, "Close") })
@@ -415,7 +415,7 @@ class SshKeyPicker(private val project: Project?, initial: String? = null) : JPa
     private fun browse() {
         val ssh = java.nio.file.Path.of(System.getProperty("user.home"), ".ssh")
         val start = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByNioFile(ssh)
-        val d = com.intellij.openapi.fileChooser.FileChooserDescriptorFactory.createSingleFileDescriptor()
+        val d = com.intellij.openapi.fileChooser.FileChooserDescriptorFactory.singleFile()
             .withTitle("Select SSH Private Key").withShowHiddenFiles(true)
         val f = com.intellij.openapi.fileChooser.FileChooser.chooseFile(d, project, start) ?: return
         val path = f.path

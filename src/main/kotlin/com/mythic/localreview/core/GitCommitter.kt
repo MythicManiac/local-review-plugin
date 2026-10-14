@@ -188,7 +188,7 @@ class GitCommitter(
         return if (configured("user.name") && configured("user.email")) {
             emptyArray()
         } else {
-            arrayOf("-c", "user.name=Local Review", "-c", "user.email=local-review@localhost")
+            arrayOf("-c", "user.name=Local Diff Review", "-c", "user.email=local-review@localhost")
         }
     }
 

@@ -37,7 +37,7 @@ class ReviewSettings : PersistentStateComponent<ReviewSettings.State> {
     }
 }
 
-class ReviewSettingsConfigurable : BoundSearchableConfigurable("Local Review", "com.mythic.localreview.settings") {
+class ReviewSettingsConfigurable : BoundSearchableConfigurable("Local Diff Review", "com.mythic.localreview.settings") {
     override fun createPanel(): DialogPanel {
         val settings = ReviewSettings.getInstance()
         return panel {

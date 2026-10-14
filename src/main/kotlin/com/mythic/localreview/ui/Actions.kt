@@ -68,7 +68,7 @@ class NewReviewAction : ReviewAction() {
         val project = e.project ?: return
         val service = ReviewService.getInstance(project)
         if (service.gitRoots().isEmpty()) {
-            Messages.showErrorDialog(project, "This project has no git repository.", "Local Review")
+            Messages.showErrorDialog(project, "This project has no git repository.", "Local Diff Review")
             return
         }
         val dlg = NewReviewDialog(project, service)
@@ -85,7 +85,7 @@ class OpenReviewAction : ReviewAction() {
             val reviews = service.listReviews()
             ApplicationManager.getApplication().invokeLater {
                 if (reviews.isEmpty()) {
-                    Messages.showInfoMessage(project, "No reviews for this repository yet in ${ReviewSettings.getInstance().storeRoot()}.", "Local Review")
+                    Messages.showInfoMessage(project, "No reviews for this repository yet in ${ReviewSettings.getInstance().storeRoot()}.", "Local Diff Review")
                     return@invokeLater
                 }
                 JBPopupFactory.getInstance().createPopupChooserBuilder(reviews)

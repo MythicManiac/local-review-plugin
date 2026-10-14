@@ -148,7 +148,7 @@ class ChangesTreePanel(
                     (if (parts.isNotEmpty()) " &nbsp;·&nbsp; <span style='color:gray'>${parts.joinToString(", ")}</span>" else "") + "</html>"
             }
             (tree.model as DefaultTreeModel).reload()
-            if (state != null && !state.isEmpty) state.applyTo(tree, root) else TreeUtil.expandAll(tree)
+            if (!state.isEmpty) state.applyTo(tree, root) else TreeUtil.expandAll(tree)
             if (a != null) syncChecks(root)
             tree.repaint()
         } finally {

@@ -139,7 +139,7 @@ class GroupSyncService : Disposable {
     }
 
     private fun notify(message: String, type: NotificationType) {
-        NotificationGroupManager.getInstance().getNotificationGroup("Local Review").createNotification(message, type).notify(null)
+        NotificationGroupManager.getInstance().getNotificationGroup("Local Diff Review").createNotification(message, type).notify(null)
     }
 
     override fun dispose() {

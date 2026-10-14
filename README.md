@@ -1,4 +1,4 @@
-# Local Review
+# Local Diff Review
 
 JetBrains IDE plugin (built and smoke-tested on PyCharm 2026.2) for reviewing **local** git changes, such as
 AI-authored branches, before they go to remote PR review. Pick two comparison points, review in the IDE's own diff viewer,
@@ -10,7 +10,7 @@ annotate code, track progress, export a report, and turn recurring findings into
 
 ## Using it
 
-Open the **Local Review** tool window (right stripe, or *Ctrl+Shift+A* → "Local Review").
+Open the **Local Diff Review** tool window (right stripe, or *Ctrl+Shift+A* → "Local Diff Review").
 
 | Task | How |
 |------|-----|
@@ -29,7 +29,7 @@ open review reopens automatically.
 
 ## Where data lives: review groups
 
-Reviews live in **groups** under `~/.local-review/` (configurable: *Settings → Tools → Local Review*). A group is **one git repo of plain JSON files, auto-committed**
+Reviews live in **groups** under `~/.local-review/` (configurable: *Settings → Tools → Local Diff Review*). A group is **one git repo of plain JSON files, auto-committed**
 on every change, holding the reviews of as many projects as you like (`<group>/<project>/<review>/`).
 
 * **Sync between devices:** *Manage Review Groups…* → select the group → *Set Remote…* (any git remote, e.g. a private GitHub repo). It then syncs automatically (after changes,
@@ -43,6 +43,15 @@ on every change, holding the reviews of as many projects as you like (`<group>/<
 * Upgrading: reviews from the previous one-repo-per-review layout are imported into the `default` group automatically (old histories are kept under `.legacy/`).
 
 See [docs/DESIGN.md](docs/DESIGN.md#storage-layout).
+
+## License and privacy
+
+Apache License 2.0 (see [LICENSE](LICENSE)). The plugin collects no telemetry and makes no network connections of its own; the only network
+traffic is `git` talking to a remote you configured for a review group.
+
+## Publishing
+
+See [docs/PUBLISHING.md](docs/PUBLISHING.md) (checklist and steps) and [docs/marketplace/listing.md](docs/marketplace/listing.md) (listing sheet).
 
 ## Build & run
 

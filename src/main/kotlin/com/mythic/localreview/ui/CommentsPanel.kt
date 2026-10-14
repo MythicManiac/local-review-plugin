@@ -18,6 +18,7 @@ import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBList
+import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
 import com.intellij.util.ui.JBUI
 import com.mythic.localreview.core.AnchorScope
 import com.mythic.localreview.core.Comment
@@ -53,8 +54,8 @@ class CommentsPanel(private val project: Project, private val service: ReviewSer
     var onCountChanged: (Int) -> Unit = {}
 
     init {
-        statusBox.renderer = com.intellij.ui.SimpleListCellRenderer.create("") { (it as StatusFilter).label }
-        kindBox.renderer = com.intellij.ui.SimpleListCellRenderer.create("All kinds") { (it as CommentKind?)?.label ?: "All kinds" }
+        statusBox.renderer = textListCellRenderer<StatusFilter> { it.label }
+        kindBox.renderer = textListCellRenderer<CommentKind?> { it?.label ?: "All kinds" }
         val filters = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply { add(statusBox); add(kindBox); add(outdatedOnly) }
         statusBox.addActionListener { refresh() }
         kindBox.addActionListener { refresh() }

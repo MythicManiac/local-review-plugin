@@ -1,25 +1,20 @@
 <idea-plugin>
   <id>com.mythic.localreview</id>
-  <name>Local Review</name>
-  <vendor>Mythic</vendor>
-  <description><![CDATA[
-    Review local git changes (e.g. AI-authored branches) before pushing them for remote PR review.
-    Annotate code, track progress per file and hunk, export reports and agent prompts, and propose AGENTS.md rules.
-  ]]></description>
+  <name>Local Diff Review</name>
 
   <depends>com.intellij.modules.platform</depends>
   <depends>Git4Idea</depends>
 
   <extensions defaultExtensionNs="com.intellij">
-    <toolWindow id="Local Review"
+    <toolWindow id="Local Diff Review"
                 anchor="right"
                 icon="AllIcons.Vcs.Merge"
                 factoryClass="com.mythic.localreview.ui.ReviewToolWindowFactory"/>
-    <notificationGroup id="Local Review" displayType="BALLOON"/>
+    <notificationGroup id="Local Diff Review" displayType="BALLOON"/>
     <applicationConfigurable parentId="tools"
                              instance="com.mythic.localreview.ui.ReviewSettingsConfigurable"
                              id="com.mythic.localreview.settings"
-                             displayName="Local Review"/>
+                             displayName="Local Diff Review"/>
     <diff.DiffExtension implementation="com.mythic.localreview.ui.diff.ReviewDiffExtension"/>
   </extensions>
 
