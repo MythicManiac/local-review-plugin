@@ -35,20 +35,27 @@ Decisions made without asking (low-regret, easy to change):
 
 ## Reuse of IDE review/diff machinery
 
-Investigated in the installed distribution (`lib/intellij.platform.collaborationTools.jar`, ~800 classes under
-`com.intellij.collaboration.ui.codereview.*`). It is the toolkit the GitHub/GitLab plugins build on:
-`EditorComponentInlaysManager` (Swing components as editor inlays), `AddCommentGutterIconRenderer`,
-`CommentedCodeFrameRenderer`, `RoundedPanel`, comment text-field factories, `RefComparisonChange(sSorter)`, review
-view-models. These are public and, as far as we can tell, not annotated `@Internal`, but they are **not documented
-as a stable plugin API** and are shaped around remote PR view-models (Kotlin flows, server-backed data).
+Investigated in the installed distribution and the `intellij-community` sources
+(`platform/collaboration-tools`, ~800 classes under `com.intellij.collaboration.ui.codereview.*`), the toolkit the
+GitHub/GitLab plugins build on. Findings:
 
-Policy:
+* The editor-comment helpers (`EditorComponentInlaysManager`, `EditorRangesController`, `DiffEditorGutterIconRendererFactory`)
+  are annotated `@ApiStatus.ScheduledForRemoval` / `@Deprecated` and absent from the module's stable `api-dump.txt`;
+  the surviving pieces are view-model based (Kotlin flows, server-backed `CodeReviewChangeListViewModel`, `RefComparisonChange`)
+  and listed only in `api-dump-experimental.txt`.
+* **Decision: no dependency on collaboration-tools.** Adopting it would mean mangling a remote-PR view-model stack
+  that is being removed/reworked.
 
-* Use **stable platform APIs** for the backbone: `DiffManager`/`DiffRequestChain`, `DiffExtension` (attach to viewers),
-  `ChangesTree`, `git4idea` (`GitChangeUtils`, `GitContentRevision`), editor gutter/inlay APIs, tool window API.
-* Use collaborationTools **leaf UI helpers** (inlay manager, gutter renderer, rounded panel) only behind our own thin
-  adapter package (`ui.platformreuse`) so that a platform break touches one place.
-* Do **not** adopt the review view-model/data-provider stack: it assumes a remote server and would require mangling.
+What we reuse instead (all public, stable-or-widely-used platform APIs):
+
+| Need | Platform API |
+|------|--------------|
+| Visual diff (side-by-side, unified, folding, nav, syntax highlighting) | `DiffManager`, `DiffRequestChain`/`DiffRequestProducer`, `SimpleDiffRequest`, `DiffContentFactoryEx` |
+| Attach review UI to the viewer | `DiffExtension` EP (`onViewerCreated`), `DiffViewerListener.onAfterRediff`, `SimpleDiffViewer`/`UnifiedDiffViewer`/`OnesideTextDiffViewer`, `DiffUserDataKeys` (`CONTEXT_ACTIONS`, `SCROLL_TO_LINE`, `FORCE_READ_ONLY`) |
+| Inline comment threads in the editor | `EditorEmbeddedComponentManager` (Swing component as block inlay), editor mouse listeners + `RangeHighlighter` gutter renderer |
+| File-structure tree with viewed checkboxes | `CheckboxTree` |
+| Tool window, settings, notifications | `ToolWindowFactory`, `Configurable`, `Notification` |
+| Git | `git4idea` (`GitRepositoryManager`, `GitExecutableManager`); diff/merge-base/blob data via our own `GitCli` so core stays IDE-free |
 
 ## Storage layout
 
