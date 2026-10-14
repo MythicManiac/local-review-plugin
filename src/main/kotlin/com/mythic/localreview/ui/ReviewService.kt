@@ -141,7 +141,13 @@ class ReviewService(private val project: Project) : Disposable {
         active = ActiveReview(store, git, changes)
         remember(store.dir)
         store.problems.forEach { notify("Review data problem: $it", NotificationType.WARNING) }
+        closeDiffTab()
         fire(ReviewListener.Kind.ACTIVE)
+    }
+
+    /** The open diff tab shows an older revision/review; close it rather than show stale code with hidden comments. */
+    private fun closeDiffTab() {
+        ApplicationManager.getApplication().invokeLater({ com.mythic.localreview.ui.diff.ReviewDiff.close(project) }, ModalityState.any())
     }
 
     private fun projectKey() = project.basePath ?: project.name
@@ -159,6 +165,7 @@ class ReviewService(private val project: Project) : Disposable {
         active?.store?.let { it.removeListener(storeListener); it.close() }
         active = null
         remember(null)
+        closeDiffTab()
         fire(ReviewListener.Kind.ACTIVE)
     }
 

@@ -199,6 +199,9 @@ class ReviewStore private constructor(
     /** Forces any pending auto-commit to run now. */
     fun flush() { committer?.flush() }
 
+    /** Records files written into the review folder outside the store's own mutations (e.g. exports) in git history. */
+    fun commitExternalChanges(message: String) { committer?.request(message) }
+
     fun close() { committer?.close() }
 
     private fun load() {

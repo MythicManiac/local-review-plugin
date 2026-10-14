@@ -108,6 +108,13 @@ class DiffReviewController(
 
     private val entries = HashMap<String, Entry>()
     private val drafts = ArrayList<Inline>()
+    private val hoverResets = ArrayList<() -> Unit>()
+
+    /** A line of [t]'s editor that carries a hunk checkbox (else line 0), used to reserve the "+" gutter lane. */
+    private fun spacerLineFor(t: EditorTarget): Int {
+        val doc = t.editor.document
+        return (hunks.firstOrNull { it.target === t }?.line ?: 0).coerceIn(0, doc.lineCount - 1)
+    }
     private val hunkMarkers = ArrayList<Pair<EditorEx, RangeHighlighter>>()
     private var hunks: List<Hunk> = emptyList()
     private val storeListener: () -> Unit = { SwingUtilities.invokeLater { if (!disposed) sync() } }
@@ -297,7 +304,7 @@ class DiffReviewController(
         // An invisible placeholder keeps the gutter lane reserved so showing/hiding the "+" never shifts the layout.
         fun clear() {
             hoverLine = -1
-            if (!editor.isDisposed && editor.document.lineCount > 0) place(0, LaneSpacer)
+            if (!editor.isDisposed && editor.document.lineCount > 0) place(spacerLineFor(t), LaneSpacer)
         }
 
         fun moveTo(line: Int) {
@@ -320,6 +327,7 @@ class DiffReviewController(
                 if (!editor.component.contains(p)) clear()
             }
         }, this)
+        hoverResets += { clear() }
         clear()
     }
 
@@ -444,6 +452,8 @@ class DiffReviewController(
             hl.gutterIconRenderer = HunkRenderer(h.fingerprint, isHunkViewed(h)) { toggleHunk(h) }
             hunkMarkers += editor to hl
         }
+        // Hunk lines changed: re-seat the lane spacer so it shares a line with a hunk checkbox (gutter width is per line).
+        hoverResets.forEach { it() }
     }
 
     private fun toggleHunk(h: Hunk) {

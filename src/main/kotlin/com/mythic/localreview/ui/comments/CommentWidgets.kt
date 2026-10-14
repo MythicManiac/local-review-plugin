@@ -176,8 +176,9 @@ class CommentCard(val comment: Comment, actions: CommentCardActions) : JPanel(Bo
         val metaLabel = JBLabel(meta.toString()).apply { foreground = JBColor.GRAY }
 
         val left = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply { isOpaque = false; add(title); add(metaLabel) }
-        val buttons = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply {
+        val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 10, 0)).apply {
             isOpaque = false
+            border = JBUI.Borders.emptyTop(4)
             add(link("Edit") { actions.edit(comment) })
             if (comment.status == CommentStatus.OPEN) {
                 add(link("Resolve") { actions.setStatus(comment, CommentStatus.RESOLVED) })
@@ -187,7 +188,6 @@ class CommentCard(val comment: Comment, actions: CommentCardActions) : JPanel(Bo
             add(link("Copy prompt") { actions.copyPrompt(comment) })
             add(link("Delete") { actions.delete(comment) })
         }
-        val header = JPanel(BorderLayout()).apply { isOpaque = false; add(left, BorderLayout.WEST); add(buttons, BorderLayout.EAST) }
 
         bodyArea.apply {
             font = UIUtil.getLabelFont()
@@ -198,12 +198,18 @@ class CommentCard(val comment: Comment, actions: CommentCardActions) : JPanel(Bo
             border = JBUI.Borders.emptyTop(3)
             foreground = if (faded) JBColor.GRAY else UIUtil.getLabelForeground()
         }
-        val center = JPanel(BorderLayout()).apply { isOpaque = false; add(bodyArea, BorderLayout.CENTER) }
-        if (comment.rule != null) {
-            center.add(JBLabel("Rule: ${comment.rule}").apply { foreground = JBColor.GRAY; border = JBUI.Borders.emptyTop(3) }, BorderLayout.SOUTH)
+        val bottom = JPanel().apply {
+            isOpaque = false
+            layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
+            if (comment.rule != null) {
+                add(JBLabel("Rule: ${comment.rule}").apply { foreground = JBColor.GRAY; border = JBUI.Borders.emptyTop(3); alignmentX = 0f })
+            }
+            buttons.alignmentX = 0f
+            add(buttons)
         }
-        add(header, BorderLayout.NORTH)
-        add(center, BorderLayout.CENTER)
+        add(left, BorderLayout.NORTH)
+        add(bodyArea, BorderLayout.CENTER)
+        add(bottom, BorderLayout.SOUTH)
     }
 
     private fun link(text: String, run: () -> Unit) = com.intellij.ui.components.ActionLink(text) { run() }.apply {

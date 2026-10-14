@@ -142,6 +142,7 @@ class ExportReviewAction : NeedsReviewAction() {
             service.notify("Export failed: ${ex.message}", NotificationType.ERROR)
             return
         }
+        a.store.commitExternalChanges("Export review")
         service.notify(
             "Review exported to $out",
             NotificationType.INFORMATION,

@@ -5,12 +5,12 @@ Status legend: `[ ]` todo, `[x]` done. Each phase ends with a commit.
 - [x] **P0 Plan** — design + plan docs, decisions recorded (`docs/DESIGN.md`).
 - [x] **P1 Scaffold** — Gradle + IntelliJ Platform Gradle Plugin against local PyCharm, `plugin.xml`, empty tool window, `runIde` boots.
 - [x] **P2 Core model + store** — model, atomic writes, tombstones, corruption quarantine, auto-commit to review repo. Unit tested.
-- [ ] **P3 Git service + review lifecycle** — (core done: resolve, merge-base, diff, create, update + tests; create dialog pending in P4) Update review (re-anchor, invalidate marks). Tested with temp repos.
-- [~] **P4 Tool window** — review picker, changes tree with directory structure and status colours (A/D/R/M), viewed checkbox, comment counts, progress bar.
-- [~] **P5 Diff integration** — open IDE diff for a file, inline comment threads, add-comment gutter/selection action, edit/resolve/delete (tombstone) in place, hunk viewed marks, file/review-level comments.
-- [~] **P6 Comments tab** — list/filter (kind, status, file, deleted), navigate to diff, restore tombstoned.
-- [~] **P7 Export** — Markdown report, JSON, agent prompt, per-comment clipboard prompt, rule candidates, AGENTS.md proposal diff.
-- [ ] **P8 Smoke + docs** — run the sandbox IDE end to end, README usage, changelog.
+- [x] **P3 Git service + review lifecycle** — (resolve, merge-base, diff, create, update; create dialog in P4) Update review (re-anchor, invalidate marks). Tested with temp repos.
+- [x] **P4 Tool window** — review picker, changes tree with directory structure and status colours (A/D/R/M), viewed checkbox, comment counts, progress bar.
+- [x] **P5 Diff integration** — open IDE diff for a file, inline comment threads, add-comment gutter/selection action, edit/resolve/delete (tombstone) in place, hunk viewed marks, file/review-level comments.
+- [x] **P6 Comments tab** — list/filter (kind, status, file, deleted), navigate to diff, restore tombstoned.
+- [x] **P7 Export** — Markdown report, JSON, agent prompt, per-comment clipboard prompt, rule candidates, AGENTS.md proposal diff.
+- [x] **P8 Smoke + docs** — run the sandbox IDE end to end, README usage, changelog.
 
 ## Risks / open items
 
@@ -18,3 +18,16 @@ Status legend: `[ ]` todo, `[x]` done. Each phase ends with a commit.
 * collaborationTools helpers are not a documented stable API → isolated in `ui.platformreuse`.
 * Unified (inline) diff viewer needs line mapping; side-by-side is primary, unified supported if the mapping API is clean.
 * GUI cannot be fully driven headlessly; smoke relies on `runIde` plus IDE-level tests for the diff extension.
+
+## Verification done
+
+* 35 automated tests (core store/anchoring/lifecycle with real git, export, headless platform test that renders a real diff viewer and asserts inlays/markers).
+* Manual smoke in the sandbox IDE (`runIde`): create review, tree statuses, open diff, add/edit comment, hunk + file marks, rule candidate, AGENTS.md proposal/write,
+  export, Update Review re-anchoring, forced IDE kill then automatic resume with all data intact.
+
+## Known limits / ideas not done
+
+* Drafts being typed are not auto-saved until you press save (saved comments always are).
+* Agent replies are not imported back; the JSON export carries stable ids so this can be added.
+* Diff viewer tab is closed on Update Review (it shows a single revision).
+* Hunk fingerprints come from the viewer's diff, so toggling whitespace-ignore can change hunk boundaries.

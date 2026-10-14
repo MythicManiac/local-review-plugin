@@ -34,6 +34,12 @@ object ReviewDiff {
 
     private val openFiles = HashMap<Project, VirtualFile>()
 
+    /** Closes the review diff tab for [project], if open. EDT only. */
+    fun close(project: Project) {
+        if (project.isDisposed) return
+        openFiles.remove(project)?.let { FileEditorManager.getInstance(project).closeFile(it) }
+    }
+
     /**
      * Opens the review's changes in the IDE diff viewer (editor tab, or window per the IDE's diff setting), positioned on
      * [change]. All changed files are in one chain so the viewer's next/previous-file navigation works. Replaces any

@@ -67,6 +67,9 @@ What we reuse instead (all public, stable-or-widely-used platform APIs):
   exports/<timestamp>/{report.md,report.json,agent-prompt.md}
 ```
 
+Per-project "last opened review" pointers live beside the reviews in `<store-root>/.state/last-opened/` (atomic writes), not in IDE state,
+so resume survives crashes and forced kills.
+
 * `review.json`: `schemaVersion`, `id`, `title`, `repo{name, remoteUrl?, lastKnownPath}`, `baseRef`, `headRef`,
   `mergeBase` (bool), `revisions[]` (append-only `{n, at, baseSha, headSha, effectiveBaseSha}`), `createdAt`.
 * Comment: `id`, `kind` (`CHANGE_REQUEST|QUESTION|NOTE`), `status` (`OPEN|RESOLVED|WONT_FIX`), `body`,
