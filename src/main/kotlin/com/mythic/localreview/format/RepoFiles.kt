@@ -28,8 +28,4 @@ object RepoFiles {
         val others = (lines(ours) + lines(theirs)).filter { it.isNotEmpty() && it !in req }.toSortedSet(Utf8Order)
         return (others + required).joinToString("\n") + "\n"
     }
-
-    private object Utf8Order : Comparator<String> {
-        override fun compare(a: String, b: String) = java.util.Arrays.compareUnsigned(a.toByteArray(Charsets.UTF_8), b.toByteArray(Charsets.UTF_8))
-    }
 }
