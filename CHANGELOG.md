@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+### Changed
+
+### Fixed
+
 ## [0.2.0] - 2026-10-21
 
 Reviews are now stored in a documented, shareable format. **Upgrade all your devices together**: a 0.1.0 device does not see what 0.2.0 writes. Reviews made with 0.1.0 are imported automatically (see below).
@@ -49,3 +55,7 @@ First public release.
 - Export a Markdown report, JSON and an AI agent prompt; copy a single comment as a prompt; propose AGENTS.md rules from comments marked as recurring patterns.
 - Review groups: one git repository per group holding reviews of many projects, with an optional remote for syncing between devices, per-group SSH key and conflict-safe merging; separate groups keep unrelated work isolated.
 - Crash-safe storage: every save is written atomically and verified, history is auto-committed, and the last open review reopens after a restart.
+
+[Unreleased]: https://github.com/MythicManiac/local-review-plugin/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/MythicManiac/local-review-plugin/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/MythicManiac/local-review-plugin/commits/v0.1.0
