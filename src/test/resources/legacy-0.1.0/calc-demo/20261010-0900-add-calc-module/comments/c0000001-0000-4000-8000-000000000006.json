@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "c0000001-0000-4000-8000-000000000006",
+  "kind": "NOTE",
+  "status": "OPEN",
+  "body": "A removed-side note that was deleted.",
+  "anchor": {
+    "scope": "LINES",
+    "path": "src/calc.ts",
+    "side": "BASE",
+    "startLine": 9,
+    "endLine": 9,
+    "snippet": [
+      "export const VERSION = \"1.0\";"
+    ],
+    "before": [
+      "  return a - b;",
+      "}",
+      ""
+    ],
+    "after": [
+      "export const DEBUG = false;"
+    ],
+    "revision": 1
+  },
+  "outdated": false,
+  "createdAt": "2026-10-10T09:15:00Z",
+  "updatedAt": "2026-10-10T09:16:00Z",
+  "deletedAt": "2026-10-10T09:16:00Z"
+}

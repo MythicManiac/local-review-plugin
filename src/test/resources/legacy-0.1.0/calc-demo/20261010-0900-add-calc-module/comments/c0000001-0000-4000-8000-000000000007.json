@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "c0000001-0000-4000-8000-000000000007",
+  "kind": "QUESTION",
+  "status": "OPEN",
+  "body": "Is the version bumped?",
+  "anchor": {
+    "scope": "LINES",
+    "path": "src/calc.ts",
+    "side": "HEAD",
+    "startLine": 20,
+    "endLine": 20,
+    "snippet": [
+      "export const VERSION = \"1.1\";"
+    ],
+    "before": [
+      "  return a / b;",
+      "}",
+      ""
+    ],
+    "after": [
+      "export const DEBUG = false;"
+    ],
+    "revision": 2
+  },
+  "outdated": false,
+  "createdAt": "2026-10-10T09:40:00Z",
+  "updatedAt": "2026-10-10T09:40:00Z"
+}

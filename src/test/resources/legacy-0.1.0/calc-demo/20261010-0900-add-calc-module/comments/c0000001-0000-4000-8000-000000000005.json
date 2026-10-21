@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "c0000001-0000-4000-8000-000000000005",
+  "kind": "NOTE",
+  "status": "OPEN",
+  "body": "On the line after the final newline.",
+  "anchor": {
+    "scope": "LINES",
+    "path": "src/calc.ts",
+    "side": "HEAD",
+    "startLine": 19,
+    "endLine": 19,
+    "snippet": [
+      ""
+    ],
+    "before": [],
+    "after": [],
+    "revision": 1
+  },
+  "outdated": false,
+  "createdAt": "2026-10-10T09:14:00Z",
+  "updatedAt": "2026-10-10T09:14:00Z"
+}

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "c0000001-0000-4000-8000-000000000008",
+  "kind": "NOTE",
+  "status": "OPEN",
+  "body": "Edited text.",
+  "anchor": {
+    "scope": "LINES",
+    "path": "src/calc.ts",
+    "side": "HEAD",
+    "startLine": 1,
+    "endLine": 1,
+    "snippet": [
+      "export function add(a: number, b: number): number {"
+    ],
+    "before": [],
+    "after": [
+      "  return a + b;",
+      "}",
+      ""
+    ],
+    "revision": 1
+  },
+  "outdated": false,
+  "createdAt": "2026-10-10T09:17:00Z",
+  "updatedAt": "2026-10-10T09:20:00Z"
+}

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "20261010-0900-add-calc-module",
+  "title": "Add calc module",
+  "repo": {
+    "name": "calc-demo",
+    "remoteUrl": "https://example.com/acme/calc-demo.git",
+    "lastKnownPath": "C:/work/calc-demo"
+  },
+  "baseRef": "master",
+  "headRef": "feature/calc",
+  "mergeBase": true,
+  "revisions": [
+    {
+      "n": 1,
+      "at": "2026-10-10T09:00:00Z",
+      "baseSha": "f2fa38f399e8b0bc8edab7af5e8d0e1d7271af42",
+      "headSha": "cb9a8793d52c586a03d8b43ed24b56c291c2085a",
+      "effectiveBaseSha": "f2fa38f399e8b0bc8edab7af5e8d0e1d7271af42"
+    },
+    {
+      "n": 2,
+      "at": "2026-10-10T09:35:00.5Z",
+      "baseSha": "f2fa38f399e8b0bc8edab7af5e8d0e1d7271af42",
+      "headSha": "302769e6a12380145e2c9f68835de42c89cc7439",
+      "effectiveBaseSha": "f2fa38f399e8b0bc8edab7af5e8d0e1d7271af42"
+    }
+  ],
+  "createdAt": "2026-10-10T09:00:00Z",
+  "updatedAt": "2026-10-10T09:40:00Z"
+}

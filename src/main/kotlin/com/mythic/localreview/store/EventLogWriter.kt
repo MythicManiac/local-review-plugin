@@ -4,6 +4,7 @@ import com.mythic.localreview.format.Event
 import com.mythic.localreview.format.EventCodec
 import com.mythic.localreview.format.Logs
 import com.mythic.localreview.format.RawEnvelope
+import com.mythic.localreview.format.ReportBuilder
 import com.mythic.localreview.format.Ulid
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -50,36 +51,55 @@ class EventLogWriter(
      */
     fun append(eventsDir: Path, device: String, events: List<Event>): List<Appended> {
         require(events.isNotEmpty()) { "no events" }
+        return appendPlanned(eventsDir, device, events.map { Planned(it) })
+    }
+
+    fun append(eventsDir: Path, device: String, event: Event): Appended = append(eventsDir, device, listOf(event)).single()
+
+    /** An event to append, optionally with the time it should carry and the id it must have (an import keeps the source's time and a deterministic id). */
+    class Planned(val event: Event, val ts: Long? = null, val id: String? = null)
+
+    /**
+     * Like [append], with each event's wished `ts` and `id`. A `ts` is raised to the previous line's plus 1 where it is not greater, because a log's
+     * `ts` is strictly increasing (SPEC 5). With [skipIdsInLog], events whose id is already in the log are left out (done under the lock, so devices
+     * importing at the same time cannot both append the same event). Returns only what was appended.
+     */
+    fun appendPlanned(eventsDir: Path, device: String, planned: List<Planned>, skipIdsInLog: Boolean = false): List<Appended> {
         Files.createDirectories(eventsDir)
         val log = eventsDir.resolve("$device.jsonl").toAbsolutePath().normalize()
         val lockFile = eventsDir.resolve("$device.lock").toAbsolutePath().normalize()
         return withDeviceLock(lockFile) {
             FileChannel.open(log, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE).use { ch ->
                 val tail = readTail(ch)
-                var ts = maxOf(clock(), (tail.lastTs ?: Long.MIN_VALUE) + 1, (ownLastTs[log] ?: Long.MIN_VALUE) + 1)
+                val have: Set<String> = if (skipIdsInLog) {
+                    val bytes = ByteBuffer.allocate(ch.size().toInt()).also { b -> ch.read(b, 0) }.array()
+                    Logs.parse(log.fileName.toString(), bytes, ReportBuilder()).map { it.id }.toHashSet()
+                } else emptySet()
+                val todo = planned.filter { it.id == null || it.id !in have }
+                if (todo.isEmpty()) return@use emptyList<Appended>()
+                var prev = maxOf(tail.lastTs ?: Long.MIN_VALUE, ownLastTs[log] ?: Long.MIN_VALUE)
                 var seq = (tail.lastSeq ?: 0) + 1
                 val out = java.io.ByteArrayOutputStream()
                 if (!tail.endsWithNewline) out.write('\n'.code) // a previous write was cut off: close its line first
-                val result = ArrayList<Appended>(events.size)
-                for (e in events) {
-                    val env = RawEnvelope(1, newId(), ts, device, seq, EventCodec.encode(e))
+                val result = ArrayList<Appended>(todo.size)
+                for (p in todo) {
+                    val ts = maxOf(p.ts ?: clock(), prev + 1)
+                    val env = RawEnvelope(1, p.id ?: newId(), ts, device, seq, EventCodec.encode(p.event))
                     out.write(env.toLine().toByteArray(Charsets.UTF_8))
                     out.write('\n'.code)
                     result += Appended(env.id, ts, seq)
-                    ts++
+                    prev = ts
                     seq++
                 }
                 val buf = ByteBuffer.wrap(out.toByteArray())
                 ch.position(ch.size())
                 while (buf.hasRemaining()) ch.write(buf)
                 ch.force(true)
-                ownLastTs[log] = ts - 1
+                ownLastTs[log] = prev
                 result
             }
         }
     }
-
-    fun append(eventsDir: Path, device: String, event: Event): Appended = append(eventsDir, device, listOf(event)).single()
 
     private fun <T> withDeviceLock(lockFile: Path, body: () -> T): T {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(lockWaitMillis)

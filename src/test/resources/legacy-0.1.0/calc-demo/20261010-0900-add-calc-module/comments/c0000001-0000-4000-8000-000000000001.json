@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "c0000001-0000-4000-8000-000000000001",
+  "kind": "CHANGE_REQUEST",
+  "status": "RESOLVED",
+  "body": "Division by zero is not handled.",
+  "anchor": {
+    "scope": "LINES",
+    "path": "src/calc.ts",
+    "side": "HEAD",
+    "startLine": 13,
+    "endLine": 15,
+    "snippet": [
+      "export function div(a: number, b: number): number {",
+      "  return a / b;",
+      "}"
+    ],
+    "before": [
+      "  return a * b;",
+      "}",
+      ""
+    ],
+    "after": [
+      "",
+      "export const VERSION = \"1.1\";",
+      "export const DEBUG = false;"
+    ],
+    "revision": 1
+  },
+  "outdated": false,
+  "rule": "Guard against division by zero in arithmetic helpers.",
+  "resolutionNote": "fixed in round 2",
+  "createdAt": "2026-10-10T09:10:00Z",
+  "updatedAt": "2026-10-10T09:30:00Z"
+}

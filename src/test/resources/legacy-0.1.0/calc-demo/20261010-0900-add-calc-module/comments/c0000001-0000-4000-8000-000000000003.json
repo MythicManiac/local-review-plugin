@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "c0000001-0000-4000-8000-000000000003",
+  "kind": "NOTE",
+  "status": "OPEN",
+  "body": "Why rename this file?",
+  "anchor": {
+    "scope": "FILE",
+    "path": "src/util_old.ts",
+    "side": "BASE",
+    "snippet": [],
+    "before": [],
+    "after": [],
+    "revision": 1
+  },
+  "outdated": false,
+  "createdAt": "2026-10-10T09:12:00Z",
+  "updatedAt": "2026-10-10T09:12:00Z"
+}
