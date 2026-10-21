@@ -1,6 +1,8 @@
 package com.mythic.localreview.format
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /** The format version this implementation reads and writes (`schemaVersion` of `group.json` and `review.json`). */
 const val SCHEMA_VERSION = 2L
@@ -69,9 +71,31 @@ object ReviewMetaCodec {
         val pin = EventCodec.decodePin(o["pin"]) ?: return MetaRead.Invalid("pin is missing or invalid")
         return MetaRead.Ok(ReviewMeta(id, title, createdAt, createdBy, RepoRef(displayName, repo["originUrl"].string(), root), baseRef, headRef, mode, pin))
     }
+
+    /** The canonical form of CONFORMANCE: properties in this order, `originUrl` and `rootCommit` as `null` when there are none. */
+    fun encode(m: ReviewMeta): JsonObject = buildJsonObject {
+        put("schemaVersion", SCHEMA_VERSION)
+        put("id", m.id)
+        put("title", m.title)
+        put("createdAt", m.createdAt)
+        put("createdBy", m.createdBy)
+        put("repo", buildJsonObject {
+            put("displayName", m.repo.displayName)
+            put("originUrl", m.repo.originUrl)
+            put("rootCommit", m.repo.rootCommit)
+        })
+        put("baseRef", m.baseRef)
+        put("headRef", m.headRef)
+        put("mode", m.mode.wire)
+        put("pin", buildJsonObject {
+            put("baseSha", m.pin.baseSha)
+            put("baseTipSha", m.pin.baseTipSha)
+            put("headSha", m.pin.headSha)
+        })
+    }
 }
 
-/** `group.json` (SPEC 4). `createdAt` is kept raw: an older tool wrote an ISO-8601 string (SPEC 9.3). */
+/** `group.json` (SPEC 4). */
 data class GroupMeta(val id: String, val name: String?, val createdAt: Long)
 
 object GroupMetaCodec {
@@ -80,5 +104,13 @@ object GroupMetaCodec {
         val id = o["id"].string()?.takeIf { Values.isId(it) } ?: return MetaRead.Invalid("id is missing or not an id")
         val createdAt = o["createdAt"].long()?.takeIf { it >= 0 } ?: return MetaRead.Invalid("createdAt is missing")
         return MetaRead.Ok(GroupMeta(id, o["name"].string(), createdAt))
+    }
+
+    /** The canonical form: `schemaVersion`, `id`, `name` (only if there is one), `createdAt`. */
+    fun encode(g: GroupMeta): JsonObject = buildJsonObject {
+        put("schemaVersion", SCHEMA_VERSION)
+        put("id", g.id)
+        g.name?.let { put("name", it) }
+        put("createdAt", g.createdAt)
     }
 }

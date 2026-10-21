@@ -1,8 +1,10 @@
 package com.mythic.localreview.core
 
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import com.mythic.localreview.format.RepoFiles
+import com.mythic.localreview.format.Utf8Order
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.nio.file.Files
 import java.time.Instant
 
@@ -10,22 +12,23 @@ sealed interface SyncResult {
     /** The group has no remote configured. */
     data object NoRemote : SyncResult
 
-    /** Sync completed. [conflicts] are the paths where both sides changed the same file (both versions were kept). */
+    /** Sync completed. [conflicts] are the paths git could not merge by itself and this code resolved by the rules of SPEC 9.3 (`group.json`, `.gitignore`, `.gitattributes`). */
     data class Ok(val pulled: Boolean, val pushed: Boolean, val conflicts: List<String> = emptyList()) : SyncResult
 
     data class Failed(val message: String) : SyncResult
 }
 
 /**
- * Two-way sync of a review group's git repository with its `origin` remote: commit local changes, fetch, merge, push.
+ * Two-way sync of a review group's git repository with its `origin` remote (SPEC 9.3): commit local changes, fetch, merge, push.
  *
- * Reviews are stored as one small file per entity, so merges are almost always conflict-free. When both devices edited
- * the very same file, **neither version is dropped**: a deterministic winner (newer `updatedAt`; for `review.json` the one
- * with more revisions) stays in place and the loser is kept beside it as `<file>.conflict-<hash>`. Both devices pick the
- * same winner and the same loser file name, so they converge without further conflicts.
+ * Devices only ever append to their own logs, and `*.jsonl` uses git's union merge driver, so merges are conflict-free by construction. A merge
+ * can still conflict in exactly three ways, which are resolved the way the format says (both devices make the same choice):
+ * `group.json` keeps the group created first, `.gitignore` and `.gitattributes` keep every other line sorted and the required lines last, and
+ * anything else aborts the merge and reports the path, leaving the user's data exactly as it was: no winner is chosen and no loser is kept aside.
  */
 object GroupSync {
     private const val MAX_ATTEMPTS = 3
+    private const val GROUP_FILE = "group.json"
 
     fun sync(c: GitCommitter): SyncResult {
         if (c.remoteUrl() == null) return SyncResult.NoRemote
@@ -90,37 +93,53 @@ object GroupSync {
             if (!isAncestor(git, remote, "HEAD")) throw GitException("merge with the remote failed")
             return MergeOutcome(true, emptyList())
         }
-        val resolved = ArrayList<String>()
+        val unmerged = git.run("diff", "--name-only", "--diff-filter=U").lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val unresolvable = unmerged.filterNot { it in RESOLVABLE }
+        if (unresolvable.isNotEmpty()) {
+            runCatching { git.run("merge", "--abort") }
+            throw GitException(
+                "The merge with the remote conflicts in ${unresolvable.joinToString(", ")}, which is not resolved automatically. " +
+                    "The merge was aborted and nothing on this machine changed. Resolve the difference in the group's folder with git, then sync again.",
+            )
+        }
         try {
-            val unmerged = git.run("diff", "--name-only", "--diff-filter=U").lines().map { it.trim() }.filter { it.isNotEmpty() }
-            for (path in unmerged) {
-                resolve(c, path)
-                resolved += path
-            }
+            for (path in unmerged) resolve(c, path)
             git.run(*c.identityArgs(), "commit", "-q", "--no-verify", "--no-gpg-sign", "--no-edit")
         } catch (e: Exception) {
             runCatching { git.run("merge", "--abort") }
             throw if (e is GitException) e else GitException("conflict resolution failed: ${e.message}")
         }
-        return MergeOutcome(true, resolved)
+        return MergeOutcome(true, unmerged)
     }
+
+    private val RESOLVABLE = setOf(GROUP_FILE, ".gitignore", ".gitattributes")
 
     private fun resolve(c: GitCommitter, path: String) {
         val git = c.git
         val ours = stage(git, 2, path)
         val theirs = stage(git, 3, path)
         val file = c.dir.resolve(path)
-        if (ours == null || theirs == null) {
-            // Modify/delete (never produced by this plugin, which only tombstones): keep whichever side still has content.
-            if (Files.exists(file)) git.run("add", "--", path) else git.run("rm", "--cached", "-q", "--", path)
-            return
+        when (path) {
+            GROUP_FILE -> {
+                // Two groups created apart were joined: keep the one created first, so both devices choose alike.
+                val winner = when {
+                    ours == null -> theirs
+                    theirs == null -> ours
+                    else -> if (groupOrder(ours) <= groupOrder(theirs)) ours else theirs
+                }
+                if (winner == null) git.run("rm", "--cached", "-q", "--", path)
+                else {
+                    Files.write(file, winner)
+                    git.run("add", "--", path)
+                }
+            }
+            else -> {
+                val required = if (path == ".gitignore") RepoFiles.GITIGNORE else RepoFiles.GITATTRIBUTES
+                val merged = RepoFiles.merge(required, ours?.toString(Charsets.UTF_8).orEmpty(), theirs?.toString(Charsets.UTF_8).orEmpty())
+                Files.write(file, merged.toByteArray(Charsets.UTF_8))
+                git.run("add", "--", path)
+            }
         }
-        val oursWins = pickOurs(path, ours, theirs)
-        git.run("checkout", if (oursWins) "--ours" else "--theirs", "--", path)
-        val loser = if (oursWins) theirs else ours
-        val loserPath = "$path.conflict-${Fingerprints.sha1Hex(String(loser, Charsets.UTF_8)).take(8)}"
-        Files.write(c.dir.resolve(loserPath), loser)
-        git.run("add", "--", path, loserPath)
     }
 
     private fun stage(git: GitCli, n: Int, path: String): ByteArray? = try {
@@ -129,30 +148,27 @@ object GroupSync {
         null
     }
 
-    /** True if our version should win. Symmetric, so both devices choose the same winner. */
-    internal fun pickOurs(path: String, ours: ByteArray, theirs: ByteArray): Boolean {
-        return rank(path, ours) > rank(path, theirs)
+    /** Orders two versions of `group.json`: smaller `createdAt` first, then smaller `id` by UTF-8 bytes. A `createdAt` that cannot be read loses. */
+    private data class GroupOrder(val createdAt: Long, val id: String) : Comparable<GroupOrder> {
+        override fun compareTo(other: GroupOrder): Int = createdAt.compareTo(other.createdAt).let { if (it != 0) it else Utf8Order.compare(id, other.id) }
     }
 
-    /** Orders versions: (revisions for review.json, updatedAt, content hash as a deterministic tie-break). */
-    private fun rank(path: String, bytes: ByteArray): Rank {
-        val text = String(bytes, Charsets.UTF_8)
-        var revisions = 0
-        var updated = Instant.MIN
-        if (path.endsWith(".json")) {
-            try {
-                val o = StoreJson.parseToJsonElement(text).jsonObject
-                revisions = (o["revisions"] as? JsonArray)?.size ?: 0
-                updated = o["updatedAt"]?.jsonPrimitive?.content?.let { Instant.parse(it) } ?: Instant.MIN
-            } catch (e: Exception) {
-                // unparsable: fall through to the hash tie-break
-            }
+    private fun groupOrder(bytes: ByteArray): GroupOrder {
+        val o = try {
+            Json.parseToJsonElement(String(bytes, Charsets.UTF_8)) as? JsonObject
+        } catch (_: Exception) {
+            null
         }
-        return Rank(revisions, updated, Fingerprints.sha1Hex(text))
+        val id = (o?.get("id") as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
+        val raw = o?.get("createdAt") as? JsonPrimitive
+        val created = when {
+            raw == null -> null
+            raw.isString -> runCatching { Instant.parse(raw.content).toEpochMilli() }.getOrNull() // an ISO-8601 string from an older tool
+            else -> raw.content.toLongOrNull()
+        }
+        return GroupOrder(created ?: Long.MAX_VALUE, id)
     }
 
-    private data class Rank(val revisions: Int, val updated: Instant, val hash: String) : Comparable<Rank> {
-        override fun compareTo(other: Rank): Int =
-            compareValuesBy(this, other, { it.revisions }, { it.updated }, { it.hash })
-    }
+    /** True if our `group.json` should win over theirs; symmetric. Exposed for tests. */
+    internal fun oursWins(ours: ByteArray, theirs: ByteArray) = groupOrder(ours) <= groupOrder(theirs)
 }

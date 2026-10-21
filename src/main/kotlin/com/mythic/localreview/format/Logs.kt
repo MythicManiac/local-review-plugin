@@ -87,6 +87,8 @@ object Logs {
     /** The `.jsonl` log files in the `events` folder of a review, in name order. Other files are not logs and are ignored (SPEC 2). */
     fun readDir(reviewDir: File): List<LogBytes> =
         File(reviewDir, "events").listFiles { f -> f.isFile && f.name.endsWith(".jsonl") }.orEmpty().sortedBy { it.name }.map { LogBytes(it.name, it.readBytes()) }
+
+    fun readDir(reviewDir: java.nio.file.Path): List<LogBytes> = readDir(reviewDir.toFile())
 }
 
 /** Compares strings by their UTF-8 bytes (SPEC 7). */

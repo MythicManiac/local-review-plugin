@@ -49,8 +49,7 @@ class GitCommitter(
                 git.run("symbolic-ref", "HEAD", "refs/heads/$BRANCH")
                 git.run("config", "core.autocrlf", "false")
             }
-            val ignore = dir.resolve(".gitignore")
-            if (!Files.exists(ignore)) AtomicFiles.write(ignore, "*.tmp\n".toByteArray())
+            // The repository files (.gitattributes, .gitignore) belong to the format and are written by GroupFiles when a group is opened.
         }
     }
 
@@ -165,10 +164,26 @@ class GitCommitter(
 
     /** `git add -A` + commit if anything is staged. Caller holds the lock. Returns true if a commit was created. */
     fun commitAllLocked(message: String): Boolean {
-        git.run("add", "-A")
+        retryWhileIndexLocked { git.run("add", "-A") }
         if (!stagedChanges()) return false
-        git.run(*identityArgs(), "commit", "-q", "--no-verify", "--no-gpg-sign", "-m", message)
+        retryWhileIndexLocked { git.run(*identityArgs(), "commit", "-q", "--no-verify", "--no-gpg-sign", "-m", message) }
         return true
+    }
+
+    /**
+     * Another tool's git operation (an IDE's own git integration, a second review IDE) may hold `.git/index.lock` for a moment: retry briefly
+     * (SPEC 9.2). A lock that stays is reported with git's own message, which names the file. A crash can leave one behind; nothing removes it here.
+     */
+    private fun <T> retryWhileIndexLocked(op: () -> T): T {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(INDEX_LOCK_WAIT_MS)
+        while (true) {
+            try {
+                return op()
+            } catch (e: GitException) {
+                if (e.message?.contains("index.lock") != true || System.nanoTime() > deadline) throw e
+                Thread.sleep(100)
+            }
+        }
     }
 
     private fun stagedChanges(): Boolean = try {
@@ -188,7 +203,7 @@ class GitCommitter(
         return if (configured("user.name") && configured("user.email")) {
             emptyArray()
         } else {
-            arrayOf("-c", "user.name=Local Diff Review", "-c", "user.email=local-review@localhost")
+            arrayOf("-c", "user.name=Local Review", "-c", "user.email=local-review@localhost")
         }
     }
 
@@ -200,5 +215,8 @@ class GitCommitter(
     companion object {
         /** Every review group uses the same branch name so devices always agree on what to sync. */
         const val BRANCH = "main"
+
+        /** How long a commit waits for another tool's `index.lock` to go away. */
+        const val INDEX_LOCK_WAIT_MS = 3000L
     }
 }

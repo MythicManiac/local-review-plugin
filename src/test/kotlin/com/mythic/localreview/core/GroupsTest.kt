@@ -133,46 +133,6 @@ class GroupsTest {
     }
 
     @Test
-    fun editingTheSameCommentOnTwoDevicesKeepsBothVersionsAndConverges() {
-        val remote = bareRemote()
-        val dev1 = ReviewGroups(tempDir())
-        val g1 = dev1.create("work", remote.toString())
-        val store1d = review(dev1, "work", project())
-        val c = store1d.addComment(CommentKind.NOTE, "original", lineAnchor())
-        dev1.sync("work")
-
-        val dev2 = ReviewGroups(tempDir())
-        val g2 = dev2.create("work", remote.toString())
-        val dir2 = dev2.repository(g2).list(null).single().dir
-        val dir1 = store1d.dir
-
-        val s1 = ReviewStore.open(dir1, dev1.committer(g1.dir), clockAt(10))
-        val s2 = ReviewStore.open(dir2, dev2.committer(g2.dir), clockAt(20))
-        s1.updateComment(c.id) { it.copy(body = "edited on device 1") }
-        s2.updateComment(c.id) { it.copy(body = "edited on device 2") }
-
-        assertTrue(dev1.sync("work") is SyncResult.Ok)
-        val r2 = dev2.sync("work") as SyncResult.Ok
-        assertEquals(1, r2.conflicts.size, "device 2 hit the conflict")
-        val r1 = dev1.sync("work") as SyncResult.Ok
-        assertTrue(r1.conflicts.isEmpty(), "device 1 just receives the resolved state")
-
-        s1.reload(); s2.reload()
-        // The newer edit wins everywhere; the older text is not lost.
-        assertEquals("edited on device 2", s1.comment(c.id)!!.body)
-        assertEquals("edited on device 2", s2.comment(c.id)!!.body)
-        for ((dir, store) in listOf(dir1 to s1, dir2 to s2)) {
-            val kept = Files.list(dir.resolve("comments")).use { it.toList() }.filter { ".conflict-" in it.name }
-            assertEquals(1, kept.size, "loser kept next to the winner on $dir")
-            assertTrue(Files.readString(kept.single()).contains("edited on device 1"))
-            assertTrue(store.problems.any { it.startsWith("Sync conflict") })
-        }
-        // Converged: nothing left to exchange.
-        assertEquals(SyncResult.Ok(false, false), dev1.sync("work"))
-        assertEquals(SyncResult.Ok(false, false), dev2.sync("work"))
-    }
-
-    @Test
     fun connectingExistingLocalGroupsWithDifferentHistoriesMergesThem() {
         val remote = bareRemote()
         val dev1 = ReviewGroups(tempDir())
