@@ -27,7 +27,7 @@
               text="Open Review..." description="Open an existing local review of this repository"
               icon="AllIcons.Actions.MenuOpen"/>
       <action id="LocalReview.UpdateReview" class="com.mythic.localreview.ui.UpdateReviewAction"
-              text="Update Review" description="Re-resolve base/head refs, pin the new commits and re-anchor comments"
+              text="Update Review" description="Re-resolve base/head refs and pin the new commits; comments are checked against them and may get a suggested new place"
               icon="AllIcons.Actions.Refresh"/>
       <action id="LocalReview.SyncGroup" class="com.mythic.localreview.ui.SyncGroupAction"
               text="Sync Review Group" description="Sync this review's group with its remote now"
@@ -35,6 +35,9 @@
       <action id="LocalReview.ManageGroups" class="com.mythic.localreview.ui.ManageGroupsAction"
               text="Manage Review Groups..." description="Create groups, set a remote to sync between devices, toggle auto-sync"
               icon="AllIcons.General.GearPlain"/>
+      <action id="LocalReview.ReviewStatus" class="com.mythic.localreview.ui.ReviewStatusAction"
+              text="Review Status..." description="Mark this review open, done or archived (archived reviews are left out of the Open Review list)"
+              icon="AllIcons.Actions.Checked"/>
       <separator/>
       <action id="LocalReview.OpenDiff" class="com.mythic.localreview.ui.OpenFirstDiffAction"
               text="Open Diff" description="Open the diff viewer on the first file not yet reviewed"

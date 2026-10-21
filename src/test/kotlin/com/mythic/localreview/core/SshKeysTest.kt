@@ -1,5 +1,7 @@
 package com.mythic.localreview.core
 
+import com.mythic.localreview.store.ReviewGroups
+import com.mythic.localreview.store.machineGroups
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.exists
@@ -24,7 +26,7 @@ class SshKeysTest {
     fun selectedKeyBecomesCoreSshCommandOfThatGroupOnly() {
         val keys = tempDir().resolve("my keys") // a path with a space must survive quoting
         val k = fakeKey(keys)
-        val groups = ReviewGroups(tempDir())
+        val groups = machineGroups(tempDir())
         groups.create("work")
         groups.create("oss")
         groups.setSshKey("work", k.toString())
@@ -43,7 +45,7 @@ class SshKeysTest {
         val dir = tempDir()
         val a = fakeKey(dir, "a.id_ed25519")
         val b = fakeKey(dir, "b.id_ed25519")
-        val groups = ReviewGroups(tempDir())
+        val groups = machineGroups(tempDir())
         groups.create("orgA"); groups.create("orgB")
         groups.setSshKey("orgA", a.toString()); groups.setSshKey("orgB", b.toString())
         assertTrue(cfg(groups, "orgA", "core.sshCommand")!!.contains("a.id_ed25519"))
@@ -55,7 +57,7 @@ class SshKeysTest {
     @Test
     fun clearingRemovesOnlyWhatWeSetAndKeepsHandWrittenCommands() {
         val k = fakeKey(tempDir())
-        val groups = ReviewGroups(tempDir())
+        val groups = machineGroups(tempDir())
         groups.create("g")
         groups.setSshKey("g", k.toString())
         groups.setSshKey("g", null)
@@ -71,7 +73,7 @@ class SshKeysTest {
     @Test
     fun invalidKeysAreRejectedBeforeAnythingIsWritten() {
         val dir = tempDir()
-        val groups = ReviewGroups(tempDir())
+        val groups = machineGroups(tempDir())
         groups.create("g")
         assertFailsWith<IllegalArgumentException> { groups.setSshKey("g", dir.resolve("missing").toString()) }
         val pub = dir.resolve("k.pub").also { Files.writeString(it, "ssh-ed25519 AAAA") }
@@ -84,13 +86,13 @@ class SshKeysTest {
 
     @Test
     fun keyIsAppliedBeforeTheRemoteIsContactedWhenCreatingAGroup() {
-        val groups = ReviewGroups(tempDir())
+        val groups = machineGroups(tempDir())
         val k = fakeKey(tempDir())
         val g = groups.create("work", bareRemote().toString(), k.toString())
         assertEquals(k.toString().replace('\\', '/'), g.sshKey)
 
         val root = tempDir()
-        val failing = ReviewGroups(root)
+        val failing = machineGroups(root)
         assertFailsWith<IllegalArgumentException> { failing.create("bad", bareRemote().toString(), root.resolve("nokey").toString()) }
         assertFalse(root.resolve("bad").exists(), "a rejected key leaves no half-made group")
     }

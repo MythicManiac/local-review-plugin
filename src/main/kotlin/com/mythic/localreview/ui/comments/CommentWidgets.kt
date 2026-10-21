@@ -1,7 +1,5 @@
 package com.mythic.localreview.ui.comments
 
-import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBCheckBox
@@ -12,11 +10,16 @@ import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
-import com.mythic.localreview.core.Comment
-import com.mythic.localreview.core.CommentKind
-import com.mythic.localreview.core.CommentStatus
+import com.mythic.localreview.format.Anchor
+import com.mythic.localreview.format.Annotation
+import com.mythic.localreview.format.AnnotationStatus
+import com.mythic.localreview.format.Kind
+import com.mythic.localreview.format.Reply
+import com.mythic.localreview.format.label
+import com.mythic.localreview.ui.RuleInput
+import com.mythic.localreview.ui.color
+import com.mythic.localreview.ui.icon
 import java.awt.BorderLayout
-import java.awt.Color
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.event.InputEvent
@@ -30,20 +33,6 @@ import javax.swing.JRadioButton
 import javax.swing.KeyStroke
 import javax.swing.SwingUtilities
 
-val CommentKind.color: Color
-    get() = when (this) {
-        CommentKind.CHANGE_REQUEST -> JBColor(Color(0xC7, 0x22, 0x22), Color(0xE0, 0x6C, 0x6C))
-        CommentKind.QUESTION -> JBColor(Color(0x1F, 0x6F, 0xD0), Color(0x5C, 0xA5, 0xF5))
-        CommentKind.NOTE -> JBColor(Color(0x6B, 0x6B, 0x6B), Color(0xA0, 0xA0, 0xA0))
-    }
-
-val CommentKind.icon
-    get() = when (this) {
-        CommentKind.CHANGE_REQUEST -> AllIcons.General.Warning
-        CommentKind.QUESTION -> AllIcons.General.ContextHelp
-        CommentKind.NOTE -> AllIcons.General.Information
-    }
-
 /** Maximum content width of inline comment widgets (px, unscaled); they shrink to fit narrow diff panes. */
 const val INLINE_WIDTH = 720
 
@@ -52,14 +41,14 @@ interface WidthAdjustable {
     var contentWidth: Int
 }
 
-/** The editable fields of a comment: kind, text and optional AGENTS.md rule candidate. */
-class CommentForm(initialKind: CommentKind, initialBody: String, initialRule: String?) : JPanel(BorderLayout()) {
-    private val kindButtons = CommentKind.entries.associateWith { JRadioButton(it.label) }
+/** The editable fields of a comment: kind, text, and whether it is a recurring pattern for AGENTS.md, with the rule text if the reviewer wrote one. */
+class CommentForm(initialKind: Kind, initialBody: String, initialCandidate: Boolean, initialRuleText: String?) : JPanel(BorderLayout()) {
+    private val kindButtons = Kind.entries.associateWith { JRadioButton(it.label) }
     val bodyArea = JBTextArea(initialBody, 5, 60).apply { lineWrap = true; wrapStyleWord = true; font = UIUtil.getLabelFont() }
-    private val ruleCheck = JBCheckBox("Recurring pattern: propose an AGENTS.md rule", initialRule != null)
-    private val ruleText = JBTextField(initialRule ?: "").apply {
-        emptyText.text = "Rule for agents, e.g. \"Never catch Exception without logging it\""
-        isEnabled = initialRule != null
+    private val ruleCheck = JBCheckBox("Recurring pattern: propose an AGENTS.md rule", initialCandidate)
+    private val ruleText = JBTextField(initialRuleText ?: "").apply {
+        emptyText.text = "Rule for agents (optional; leave empty to word it later)"
+        isEnabled = initialCandidate
     }
 
     init {
@@ -83,26 +72,22 @@ class CommentForm(initialKind: CommentKind, initialBody: String, initialRule: St
         add(form, BorderLayout.CENTER)
     }
 
-    fun kind(): CommentKind = kindButtons.entries.first { it.value.isSelected }.key
+    fun kind(): Kind = kindButtons.entries.first { it.value.isSelected }.key
     fun text(): String = bodyArea.text.trim()
-    fun rule(): String? = if (ruleCheck.isSelected) ruleText.text.trim().ifEmpty { null } else null
+    fun rule(): RuleInput = RuleInput(ruleCheck.isSelected, ruleText.text.trim().ifEmpty { null })
 
     /** Error message if the form cannot be saved, else null. */
-    fun validateInput(): String? = when {
-        text().isEmpty() -> "Write something first."
-        ruleCheck.isSelected && ruleText.text.isBlank() -> "Enter the rule text or untick the rule box."
-        else -> null
-    }
+    fun validateInput(): String? = if (text().isEmpty()) "Write something first." else null
 }
 
 /** A [CommentForm] with Save/Cancel buttons for use inside editor inlays. Ctrl+Enter saves, Esc cancels. */
 class InlineComposer(
-    initial: Comment?,
-    defaultKind: CommentKind = CommentKind.CHANGE_REQUEST,
-    private val onSave: (CommentKind, String, String?) -> String?,
+    initial: Annotation?,
+    defaultKind: Kind = Kind.CHANGE_REQUEST,
+    private val onSave: (Kind, String, RuleInput) -> String?,
     private val onCancel: () -> Unit,
 ) : JPanel(BorderLayout()), WidthAdjustable {
-    val form = CommentForm(initial?.kind ?: defaultKind, initial?.body ?: "", initial?.rule)
+    val form = CommentForm(initial?.kind ?: defaultKind, initial?.body ?: "", initial?.isRuleCandidate == true, initial?.ruleText)
     private val error = JBLabel().apply { foreground = JBColor.RED; isVisible = false }
 
     init {
@@ -119,12 +104,7 @@ class InlineComposer(
         val south = JPanel(BorderLayout()).apply { isOpaque = false; add(error, BorderLayout.NORTH); add(buttons, BorderLayout.CENTER) }
         add(form, BorderLayout.CENTER)
         add(south, BorderLayout.SOUTH)
-        val area = form.bodyArea
-        area.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK), "lr.save")
-        area.actionMap.put("lr.save", object : AbstractAction() { override fun actionPerformed(e: java.awt.event.ActionEvent?) = submit() })
-        area.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "lr.cancel")
-        area.actionMap.put("lr.cancel", object : AbstractAction() { override fun actionPerformed(e: java.awt.event.ActionEvent?) = onCancel() })
-
+        bindKeys(form.bodyArea, ::submit, onCancel)
     }
 
     private fun submit() {
@@ -142,21 +122,73 @@ class InlineComposer(
     override fun getPreferredSize(): Dimension = Dimension(contentWidth, super.getPreferredSize().height)
 }
 
-/** Callbacks a [CommentCard] needs from its host. */
-interface CommentCardActions {
-    fun edit(c: Comment)
-    fun setStatus(c: Comment, status: CommentStatus)
-    fun delete(c: Comment)
-    fun copyPrompt(c: Comment)
+private fun bindKeys(area: JBTextArea, save: () -> Unit, cancel: () -> Unit) {
+    area.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK), "lr.save")
+    area.actionMap.put("lr.save", object : AbstractAction() { override fun actionPerformed(e: java.awt.event.ActionEvent?) = save() })
+    area.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "lr.cancel")
+    area.actionMap.put("lr.cancel", object : AbstractAction() { override fun actionPerformed(e: java.awt.event.ActionEvent?) = cancel() })
 }
 
-/** Read-only display of one comment with Edit / Resolve / Delete buttons. */
-class CommentCard(val comment: Comment, actions: CommentCardActions) : JPanel(BorderLayout()), WidthAdjustable {
+/** A single text box with Save/Cancel for writing or editing a reply inside an editor inlay. */
+class InlineReplyComposer(
+    initial: String,
+    saveLabel: String,
+    private val onSave: (String) -> String?,
+    private val onCancel: () -> Unit,
+) : JPanel(BorderLayout()), WidthAdjustable {
+    private val area = JBTextArea(initial, 3, 60).apply { lineWrap = true; wrapStyleWord = true; font = UIUtil.getLabelFont() }
+    private val error = JBLabel().apply { foreground = JBColor.RED; isVisible = false }
+
+    init {
+        border = JBUI.Borders.compound(JBUI.Borders.customLine(JBColor.border(), 1), JBUI.Borders.empty(6))
+        background = UIUtil.getPanelBackground()
+        val save = JButton(saveLabel)
+        val cancel = JButton("Cancel")
+        save.addActionListener { submit() }
+        cancel.addActionListener { onCancel() }
+        val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+            isOpaque = false
+            add(save); add(cancel); add(JBLabel("Ctrl+Enter to save", UIUtil.ComponentStyle.SMALL).apply { foreground = JBColor.GRAY })
+        }
+        add(JBScrollPane(area), BorderLayout.CENTER)
+        add(JPanel(BorderLayout()).apply { isOpaque = false; add(error, BorderLayout.NORTH); add(buttons, BorderLayout.CENTER) }, BorderLayout.SOUTH)
+        bindKeys(area, ::submit, onCancel)
+    }
+
+    private fun submit() {
+        val text = area.text.trim()
+        val problem = if (text.isEmpty()) "Write something first." else onSave(text)
+        error.isVisible = problem != null
+        error.text = problem ?: ""
+        revalidate()
+        SwingUtilities.getAncestorOfClass(JComponent::class.java, this)?.revalidate()
+    }
+
+    fun focusText() { area.requestFocusInWindow() }
+
+    override var contentWidth: Int = JBUI.scale(INLINE_WIDTH)
+
+    override fun getPreferredSize(): Dimension = Dimension(contentWidth, super.getPreferredSize().height)
+}
+
+/** Callbacks a [CommentCard] needs from its host. */
+interface CommentCardActions {
+    fun edit(c: Annotation)
+    fun setStatus(c: Annotation, status: AnnotationStatus)
+    fun delete(c: Annotation)
+    fun copyPrompt(c: Annotation)
+    fun reply(c: Annotation)
+    fun editReply(c: Annotation, r: Reply)
+    fun deleteReply(c: Annotation, r: Reply)
+}
+
+/** Read-only display of one comment with its replies, and Edit / Resolve / Reply / Delete buttons. */
+class CommentCard(val comment: Annotation, actions: CommentCardActions) : JPanel(BorderLayout()), WidthAdjustable {
     override var contentWidth: Int = JBUI.scale(INLINE_WIDTH)
     private val bodyArea = JBTextArea(comment.body)
 
     init {
-        val faded = comment.status != CommentStatus.OPEN
+        val faded = comment.status != AnnotationStatus.OPEN
         border = JBUI.Borders.compound(
             JBUI.Borders.customLine(comment.kind.color, 0, 3, 0, 0),
             JBUI.Borders.compound(JBUI.Borders.customLine(JBColor.border(), 1, 0, 1, 1), JBUI.Borders.empty(5, 8)),
@@ -168,10 +200,10 @@ class CommentCard(val comment: Comment, actions: CommentCardActions) : JPanel(Bo
             font = font.deriveFont(java.awt.Font.BOLD)
         }
         val meta = StringBuilder()
-        if (comment.status != CommentStatus.OPEN) meta.append("  ·  ").append(comment.status.label)
-        if (comment.rule != null) meta.append("  ·  rule candidate")
-        if (comment.anchor.startLine != null && comment.anchor.endLine != comment.anchor.startLine) {
-            meta.append("  ·  lines ${comment.anchor.startLine}–${comment.anchor.endLine}")
+        if (comment.status != AnnotationStatus.OPEN) meta.append("  ·  ").append(comment.status.label)
+        if (comment.isRuleCandidate) meta.append("  ·  rule candidate")
+        (comment.anchor as? Anchor.Lines)?.ranges?.filter { it.endLine != it.startLine }?.forEach {
+            meta.append("  ·  lines ${it.startLine}–${it.endLine}")
         }
         val metaLabel = JBLabel(meta.toString()).apply { foreground = JBColor.GRAY }
 
@@ -180,11 +212,12 @@ class CommentCard(val comment: Comment, actions: CommentCardActions) : JPanel(Bo
             isOpaque = false
             border = JBUI.Borders.emptyTop(4)
             add(link("Edit") { actions.edit(comment) })
-            if (comment.status == CommentStatus.OPEN) {
-                add(link("Resolve") { actions.setStatus(comment, CommentStatus.RESOLVED) })
+            if (comment.status == AnnotationStatus.OPEN) {
+                add(link("Resolve") { actions.setStatus(comment, AnnotationStatus.RESOLVED) })
             } else {
-                add(link("Reopen") { actions.setStatus(comment, CommentStatus.OPEN) })
+                add(link("Reopen") { actions.setStatus(comment, AnnotationStatus.OPEN) })
             }
+            add(link("Reply") { actions.reply(comment) })
             add(link("Copy prompt") { actions.copyPrompt(comment) })
             add(link("Delete") { actions.delete(comment) })
         }
@@ -201,15 +234,42 @@ class CommentCard(val comment: Comment, actions: CommentCardActions) : JPanel(Bo
         val bottom = JPanel().apply {
             isOpaque = false
             layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
-            if (comment.rule != null) {
-                add(JBLabel("Rule: ${comment.rule}").apply { foreground = JBColor.GRAY; border = JBUI.Borders.emptyTop(3); alignmentX = 0f })
+            if (!comment.ruleText.isNullOrBlank()) {
+                add(JBLabel("Rule: ${comment.ruleText}").apply { foreground = JBColor.GRAY; border = JBUI.Borders.emptyTop(3); alignmentX = 0f })
+            } else if (comment.isRuleCandidate) {
+                add(JBLabel("Rule candidate: needs wording").apply { foreground = JBColor.GRAY; border = JBUI.Borders.emptyTop(3); alignmentX = 0f })
             }
+            for (r in comment.replies.filter { !it.deleted }) add(replyRow(r, actions))
             buttons.alignmentX = 0f
             add(buttons)
         }
         add(left, BorderLayout.NORTH)
         add(bodyArea, BorderLayout.CENTER)
         add(bottom, BorderLayout.SOUTH)
+    }
+
+    private fun replyRow(r: Reply, actions: CommentCardActions): JComponent {
+        val text = JBTextArea(r.body).apply {
+            font = UIUtil.getLabelFont()
+            isEditable = false
+            lineWrap = true
+            wrapStyleWord = true
+            isOpaque = false
+        }
+        val row = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            alignmentX = 0f
+            border = JBUI.Borders.compound(JBUI.Borders.emptyTop(4), JBUI.Borders.customLine(JBColor.border(), 0, 2, 0, 0))
+        }
+        val links = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+            isOpaque = false
+            add(JBLabel("Reply").apply { foreground = JBColor.GRAY })
+            add(link("Edit") { actions.editReply(comment, r) })
+            add(link("Delete") { actions.deleteReply(comment, r) })
+        }
+        row.add(links, BorderLayout.NORTH)
+        row.add(text, BorderLayout.CENTER)
+        return row
     }
 
     private fun link(text: String, run: () -> Unit) = com.intellij.ui.components.ActionLink(text) { run() }.apply {
@@ -228,10 +288,10 @@ class CommentCard(val comment: Comment, actions: CommentCardActions) : JPanel(Bo
 class CommentDialog(
     project: com.intellij.openapi.project.Project,
     title: String,
-    private val initial: Comment?,
-    defaultKind: CommentKind = CommentKind.NOTE,
+    initial: Annotation?,
+    defaultKind: Kind = Kind.COMMENT,
 ) : DialogWrapper(project) {
-    private val form = CommentForm(initial?.kind ?: defaultKind, initial?.body ?: "", initial?.rule)
+    private val form = CommentForm(initial?.kind ?: defaultKind, initial?.body ?: "", initial?.isRuleCandidate == true, initial?.ruleText)
 
     init {
         this.title = title
@@ -247,4 +307,21 @@ class CommentDialog(
     val kind get() = form.kind()
     val text get() = form.text()
     val rule get() = form.rule()
+}
+
+/** Modal dialog for writing or editing a reply from a list. */
+class ReplyDialog(project: com.intellij.openapi.project.Project, title: String, initial: String = "") : DialogWrapper(project) {
+    private val area = JBTextArea(initial, 5, 60).apply { lineWrap = true; wrapStyleWord = true; font = UIUtil.getLabelFont() }
+
+    init {
+        this.title = title
+        init()
+    }
+
+    override fun createCenterPanel(): JComponent = JBScrollPane(area)
+    override fun getPreferredFocusedComponent(): JComponent = area
+    override fun doValidate(): com.intellij.openapi.ui.ValidationInfo? =
+        if (area.text.isBlank()) com.intellij.openapi.ui.ValidationInfo("Write something first.", area) else null
+
+    val text get() = area.text.trim()
 }

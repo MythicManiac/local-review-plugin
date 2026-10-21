@@ -9,14 +9,12 @@ import com.intellij.diff.tools.util.base.DiffViewerBase
 import com.intellij.diff.tools.util.base.DiffViewerListener
 import com.intellij.diff.tools.util.side.OnesideTextDiffViewer
 import com.intellij.diff.tools.util.side.TwosideTextDiffViewer
-import com.intellij.diff.util.DiffUtil
 import com.intellij.diff.util.Side as DiffSide
 import com.intellij.icons.AllIcons
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseListener
@@ -30,31 +28,35 @@ import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.util.Disposer
 import com.intellij.util.ui.JBUI
-import com.mythic.localreview.core.Anchor
-import com.mythic.localreview.core.AnchorScope
-import com.mythic.localreview.core.Anchoring
-import com.mythic.localreview.core.Comment
-import com.mythic.localreview.core.CommentKind
-import com.mythic.localreview.core.CommentStatus
-import com.mythic.localreview.core.Fingerprints
-import com.mythic.localreview.core.Side
 import com.mythic.localreview.export.AgentPrompts
+import com.mythic.localreview.format.Anchor
+import com.mythic.localreview.format.AnchorRange
+import com.mythic.localreview.format.Annotation
+import com.mythic.localreview.format.AnnotationStatus
+import com.mythic.localreview.format.CommentState
+import com.mythic.localreview.format.Interval
+import com.mythic.localreview.format.Reply
+import com.mythic.localreview.format.Side
+import com.mythic.localreview.format.captureSnapshot
+import com.mythic.localreview.ui.Hunk
+import com.mythic.localreview.ui.ReviewListener
 import com.mythic.localreview.ui.ReviewService
 import com.mythic.localreview.ui.comments.CommentCard
 import com.mythic.localreview.ui.comments.CommentCardActions
-import com.mythic.localreview.ui.comments.InlineComposer
 import com.mythic.localreview.ui.comments.INLINE_WIDTH
+import com.mythic.localreview.ui.comments.InlineComposer
+import com.mythic.localreview.ui.comments.InlineReplyComposer
 import com.mythic.localreview.ui.comments.WidthAdjustable
+import com.mythic.localreview.ui.exportInput
 import java.awt.BorderLayout
 import java.awt.datatransfer.StringSelection
-import java.io.IOException
 import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 
-private fun DiffSide.toReview(): Side = if (this == DiffSide.LEFT) Side.BASE else Side.HEAD
-private fun Side.toDiff(): DiffSide = if (this == Side.BASE) DiffSide.LEFT else DiffSide.RIGHT
+private fun DiffSide.toReview(): Side = if (this == DiffSide.LEFT) Side.OLD else Side.NEW
+private fun Side.toDiff(): DiffSide = if (this == Side.OLD) DiffSide.LEFT else DiffSide.RIGHT
 
 /** One editor of a diff viewer plus how its lines map to (side, line) pairs of the compared files. */
 private abstract class EditorTarget(val editor: EditorEx) {
@@ -64,12 +66,16 @@ private abstract class EditorTarget(val editor: EditorEx) {
     /** (side, 0-based line) a new comment at [editorLine] would attach to, or null if not commentable. */
     abstract fun fromEditorLine(editorLine: Int): Pair<DiffSide, Int>?
 
+    /** The 0-based line of each side shown at [editorLine] (-1 for a side that does not have it): old, new. */
+    abstract fun bothSides(editorLine: Int): IntArray?
+
     abstract fun hasSide(side: DiffSide): Boolean
 }
 
 private class SideTarget(editor: EditorEx, val side: DiffSide) : EditorTarget(editor) {
     override fun toEditorLine(side: DiffSide, line: Int) = if (side == this.side) line else -1
     override fun fromEditorLine(editorLine: Int) = side to editorLine
+    override fun bothSides(editorLine: Int) = IntArray(2) { if (it == side.index) editorLine else -1 }
     override fun hasSide(side: DiffSide) = side == this.side
 }
 
@@ -79,12 +85,16 @@ private class UnifiedTarget(val viewer: UnifiedDiffViewer) : EditorTarget(viewer
         val r = viewer.transferLineFromOnesideStrict(editorLine) ?: return null
         return r.second to r.first[r.second.index]
     }
+    override fun bothSides(editorLine: Int): IntArray? = viewer.transferLineFromOnesideStrict(editorLine)?.first
     override fun hasSide(side: DiffSide) = true
 }
 
 /**
  * Attaches the review UI to one diff viewer: inline comment cards, a hover "+" to add comments, and per-hunk
- * viewed markers. Everything is derived from [ReviewFileContext.review]'s store, so it re-renders on any store change.
+ * reviewed markers. Everything is derived from the review's state, so it re-renders on any change.
+ *
+ * Line comments and region marks are offered only on a side whose lines are known by the format's line model and whose editor shows exactly those
+ * lines (SPEC: a tool whose viewer shows other line numbers than the blob's must not offer them).
  */
 class DiffReviewController(
     private val viewer: FrameDiffTool.DiffViewer,
@@ -93,7 +103,6 @@ class DiffReviewController(
 ) : Disposable {
     private val project = ctx.project
     private val review = ctx.review
-    private val store = review.store
     private val change = ctx.change
     private val service = ReviewService.getInstance(project)
 
@@ -104,7 +113,7 @@ class DiffReviewController(
         else -> emptyList()
     }
 
-    private class Entry(val comment: Comment, val inline: Inline?, val host: JPanel)
+    private class Entry(val comment: Annotation, val inline: Inline?, val host: JPanel)
 
     private val entries = HashMap<String, Entry>()
     private val drafts = ArrayList<Inline>()
@@ -116,13 +125,29 @@ class DiffReviewController(
         return (hunks.firstOrNull { it.target === t }?.line ?: 0).coerceIn(0, doc.lineCount - 1)
     }
     private val hunkMarkers = ArrayList<Pair<EditorEx, RangeHighlighter>>()
-    private var hunks: List<Hunk> = emptyList()
-    private val storeListener: () -> Unit = { SwingUtilities.invokeLater { if (!disposed) sync() } }
+    private var hunks: List<ViewerHunk> = emptyList()
 
     @Volatile
     private var disposed = false
 
-    private class Hunk(val fingerprint: String, val target: EditorTarget, val line: Int)
+    /** A hunk as the viewer shows it: its changed lines on each side that has line features, and the editor line that carries its checkbox. */
+    private class ViewerHunk(val hunk: Hunk, val target: EditorTarget, val line: Int)
+
+    /** Whether the editor of [side] shows exactly the lines of the format's line model (the document has one phantom line after a final newline). */
+    private val sideOk: Map<Side, Boolean> = Side.entries.associateWith { side ->
+        val lines = ctx.lines(side) ?: return@associateWith false
+        val doc = documentOf(side.toDiff()) ?: return@associateWith false
+        doc.lineCount == lines.size || doc.lineCount == lines.size + 1 || (lines.isEmpty() && doc.lineCount == 1)
+    }
+
+    private fun documentOf(side: DiffSide) = when (viewer) {
+        is TwosideTextDiffViewer -> viewer.getContent(side)?.document
+        is UnifiedDiffViewer -> viewer.getDocument(side)
+        is OnesideTextDiffViewer -> if (viewer.side == side) viewer.content.document else null
+        else -> null
+    }
+
+    private val listener = ReviewListener { SwingUtilities.invokeLater { if (!disposed) sync() } }
 
     init {
         Disposer.register(viewer, this)
@@ -132,7 +157,7 @@ class DiffReviewController(
                 override fun componentResized(e: java.awt.event.ComponentEvent?) = refitAll()
             })
         }
-        store.addListener(storeListener)
+        service.addListener(this, listener)
         (viewer as? DiffViewerBase)?.addListener(object : DiffViewerListener() {
             override fun onAfterRediff() {
                 computeHunks()
@@ -143,7 +168,6 @@ class DiffReviewController(
 
     override fun dispose() {
         disposed = true
-        store.removeListener(storeListener)
         clearRendered()
     }
 
@@ -163,17 +187,26 @@ class DiffReviewController(
 
     // ---- sync ---------------------------------------------------------------------------------------------
 
-    private fun matches(a: Anchor) =
-        (a.side == Side.HEAD && a.path == change.newPath) || (a.side == Side.BASE && a.path == change.oldPath)
+    /** The comments to draw in this file: about this path, and still where they were written (current, or unchanged since). */
+    private fun desired(): List<Annotation> = review.comments().filter { c ->
+        val path = when (val a = c.anchor) {
+            Anchor.Review -> null
+            is Anchor.File -> a.path
+            is Anchor.Lines -> a.path
+        }
+        path == change.path && when (review.commentState(c)) {
+            CommentState.Current, CommentState.Unchanged -> true
+            else -> false
+        }
+    }
 
     private fun sync() {
         if (disposed || targets.isEmpty()) return
-        val rev = store.review().current.n
-        val desired = store.comments().filter { it.anchor.scope != AnchorScope.REVIEW && !it.outdated && it.anchor.revision == rev && matches(it.anchor) }
-        val desiredIds = desired.map { it.id }.toSet()
+        val desired = desired()
+        val byId = desired.associateBy { it.id }
         for (id in entries.keys.toList()) {
             val e = entries[id]!!
-            if (id !in desiredIds || e.comment != desired.first { it.id == id }) {
+            if (id !in byId || e.comment != byId[id]) {
                 e.inline?.dispose()
                 entries.remove(id)
             }
@@ -182,43 +215,47 @@ class DiffReviewController(
         syncHunkMarkers()
     }
 
-    private fun render(c: Comment, priority: Int) {
-        val a = c.anchor
-        val side = a.side.toDiff()
+    /** Where a comment is drawn: the end of its range on the new side if it has one there, else on the old side; a file comment goes above the first line. */
+    private fun render(c: Annotation, priority: Int) {
         val target: EditorTarget
         val line: Int
         val above: Boolean
-        if (a.scope == AnchorScope.FILE) {
-            target = targets.firstOrNull { it.hasSide(side) } ?: targets.first()
-            line = 0
-            above = true
-        } else {
-            target = targets.firstOrNull { it.hasSide(side) && it.toEditorLine(side, a.endLine!! - 1) >= 0 } ?: return
-            line = target.toEditorLine(side, a.endLine!! - 1)
-            above = false
-            if (line >= target.editor.document.lineCount) return
+        when (val a = c.anchor) {
+            Anchor.Review -> return
+            is Anchor.File -> {
+                val side = if (change.blob(Side.NEW) != null) DiffSide.RIGHT else DiffSide.LEFT
+                target = targets.firstOrNull { it.hasSide(side) } ?: targets.first()
+                line = 0
+                above = true
+            }
+            is Anchor.Lines -> {
+                val r = a.ranges.firstOrNull { it.side == Side.NEW && sideOk[Side.NEW] == true } ?: a.ranges.firstOrNull { sideOk[it.side] == true } ?: return
+                val side = r.side.toDiff()
+                target = targets.firstOrNull { it.hasSide(side) && it.toEditorLine(side, r.endLine - 1) >= 0 } ?: return
+                line = target.toEditorLine(side, r.endLine - 1)
+                above = false
+            }
         }
+        if (line < 0 || line >= target.editor.document.lineCount) return
         val host = JPanel(BorderLayout()).apply { isOpaque = false }
         showCard(host, c)
         val inline = addInlay(target.editor, line, above, host, priority)
         entries[c.id] = Entry(c, inline, host)
     }
 
-    private fun showCard(host: JPanel, c: Comment) {
+    private fun showCard(host: JPanel, c: Annotation) {
         host.removeAll()
         host.add(CommentCard(c, cardActions), BorderLayout.CENTER)
         host.revalidate()
     }
 
     private val cardActions = object : CommentCardActions {
-        override fun edit(c: Comment) {
+        override fun edit(c: Annotation) {
             val e = entries[c.id] ?: return
             e.host.removeAll()
             val composer = InlineComposer(
                 initial = c,
-                onSave = { kind, body, rule ->
-                    saving { store.updateComment(c.id) { it.copy(kind = kind, body = body, rule = rule) } }
-                },
+                onSave = { kind, body, rule -> if (service.editComment(c, kind, body, rule)) null else "Not saved: see the notification." },
                 onCancel = { showCard(e.host, c); e.inline?.refresh() },
             )
             e.host.add(composer, BorderLayout.CENTER)
@@ -226,28 +263,50 @@ class DiffReviewController(
             composer.focusText()
         }
 
-        override fun setStatus(c: Comment, status: CommentStatus) {
-            saving { store.updateComment(c.id) { it.copy(status = status) } }
+        override fun setStatus(c: Annotation, status: AnnotationStatus) {
+            service.setStatus(c, status)
         }
 
-        override fun delete(c: Comment) {
-            saving { store.deleteComment(c.id) }
-            service.notify("Comment deleted.", NotificationType.INFORMATION, "Undo" to { store.restoreComment(c.id) })
+        override fun delete(c: Annotation) {
+            if (service.deleteComment(c)) service.notify("Comment deleted.", NotificationType.INFORMATION, "Undo" to { service.restoreComment(c) })
         }
 
-        override fun copyPrompt(c: Comment) {
-            com.intellij.openapi.ide.CopyPasteManager.getInstance().setContents(StringSelection(AgentPrompts.forComment(store.review(), c)))
+        override fun copyPrompt(c: Annotation) {
+            val a = review
+            com.intellij.openapi.ide.CopyPasteManager.getInstance().setContents(StringSelection(AgentPrompts.forComment(exportInput(a), c)))
             service.notify("Prompt for this comment copied to the clipboard.")
         }
-    }
 
-    /** Runs a store mutation, reporting I/O failure to the user. Returns an error message or null. */
-    private fun saving(block: () -> Any?): String? = try {
-        block()
-        null
-    } catch (e: IOException) {
-        service.notify("Could not save to the review folder: ${e.message}", NotificationType.ERROR)
-        "Could not save: ${e.message}"
+        override fun reply(c: Annotation) {
+            val e = entries[c.id] ?: return
+            val composer = InlineReplyComposer(
+                initial = "",
+                saveLabel = "Reply",
+                onSave = { text -> if (service.addReply(c, text)) null else "Not saved: see the notification." },
+                onCancel = { showCard(e.host, c); e.inline?.refresh() },
+            )
+            e.host.add(composer, BorderLayout.SOUTH)
+            e.inline?.refresh()
+            composer.focusText()
+        }
+
+        override fun editReply(c: Annotation, r: Reply) {
+            val e = entries[c.id] ?: return
+            e.host.removeAll()
+            val composer = InlineReplyComposer(
+                initial = r.body,
+                saveLabel = "Save",
+                onSave = { text -> if (service.editReply(c, r.id, text)) null else "Not saved: see the notification." },
+                onCancel = { showCard(e.host, c); e.inline?.refresh() },
+            )
+            e.host.add(composer, BorderLayout.CENTER)
+            e.inline?.refresh()
+            composer.focusText()
+        }
+
+        override fun deleteReply(c: Annotation, r: Reply) {
+            if (service.deleteReply(c, r.id)) service.notify("Reply deleted.", NotificationType.INFORMATION, "Undo" to { service.restoreReply(c, r.id) })
+        }
     }
 
     /** An inline component embedded in an editor; its content width follows the editor's visible width. */
@@ -283,9 +342,11 @@ class DiffReviewController(
 
     // ---- adding comments --------------------------------------------------------------------------------------------
 
-    private fun sideLines(side: DiffSide): List<String> {
-        val content = request.contents.getOrNull(side.index) as? DocumentContent ?: return emptyList()
-        return Anchoring.splitLines(content.document.text)
+    /** Whether the 0-based [line] of [side] can carry a comment: that side has line features, and the line exists (there is none after a final newline). */
+    private fun commentable(side: DiffSide, line: Int): Boolean {
+        val s = side.toReview()
+        val lines = ctx.lines(s) ?: return false
+        return sideOk[s] == true && line in 0 until lines.size
     }
 
     private fun installHover(t: EditorTarget) {
@@ -310,7 +371,9 @@ class DiffReviewController(
         fun moveTo(line: Int) {
             if (line == hoverLine) return
             val doc = editor.document
-            if (line < 0 || line >= doc.lineCount || t.fromEditorLine(line) == null) return clear()
+            if (line < 0 || line >= doc.lineCount) return clear()
+            val at = t.fromEditorLine(line)
+            if (at == null || !commentable(at.first, at.second)) return clear()
             hoverLine = line
             place(line, AddCommentRenderer(line) { startComposer(t, line) })
         }
@@ -331,35 +394,61 @@ class DiffReviewController(
         clear()
     }
 
+    /**
+     * The ranges a comment on the selected editor lines gets (ALGORITHMS 6): in a side-by-side diff one range on that side; in a unified diff one range
+     * per side, each from the first to the last selected line that exists on that side (an unchanged line is on both). A single click is one line, on the
+     * new side if the line is there.
+     */
+    private fun rangesFor(t: EditorTarget, clickedLine: Int, first: Int, last: Int, hasSelection: Boolean): List<Pair<Side, IntRange>> {
+        if (t is SideTarget) {
+            val side = t.side.toReview()
+            return listOf(side to (first..last))
+        }
+        val perSide = Side.entries.associateWith { ArrayList<Int>() }
+        val range = if (hasSelection) first..last else clickedLine..clickedLine
+        for (l in range) {
+            val both = t.bothSides(l) ?: continue
+            if (both[0] >= 0) perSide.getValue(Side.OLD) += both[0]
+            if (both[1] >= 0) perSide.getValue(Side.NEW) += both[1]
+        }
+        if (!hasSelection) {
+            // One click: one line on one side; prefer the new side.
+            val n = perSide.getValue(Side.NEW)
+            return if (n.isNotEmpty()) listOf(Side.NEW to (n.first()..n.first())) else perSide.getValue(Side.OLD).firstOrNull()?.let { listOf(Side.OLD to (it..it)) }.orEmpty()
+        }
+        return Side.entries.mapNotNull { s -> perSide.getValue(s).takeIf { it.isNotEmpty() }?.let { s to (it.min()..it.max()) } }
+    }
+
     private fun startComposer(t: EditorTarget, clickedLine: Int) {
         val editor = t.editor
         val doc = editor.document
         var startLine = clickedLine
         var endLine = clickedLine
+        var hasSelection = false
         val sel = editor.selectionModel
         if (sel.hasSelection()) {
             val s = doc.getLineNumber(sel.selectionStart)
             var e = doc.getLineNumber(sel.selectionEnd)
-            if (e > s && sel.selectionEnd == doc.getLineStartOffset(e)) e--
-            if (clickedLine in s..e) { startLine = s; endLine = e }
+            if (e > s && sel.selectionEnd == doc.getLineStartOffset(e)) e-- // a selection that ends at column 1 does not include that line
+            if (clickedLine in s..e) {
+                startLine = s
+                endLine = e
+                hasSelection = s != e || sel.selectionEnd - sel.selectionStart > 0
+            }
         }
-        val from = t.fromEditorLine(startLine) ?: return
-        var to = t.fromEditorLine(endLine) ?: from
-        var fromLine = from
-        if (from.first != to.first) { // selection spans both sides of a unified diff: keep just the clicked line
-            fromLine = t.fromEditorLine(clickedLine) ?: return
-            to = fromLine
-            endLine = clickedLine
+        val raw = if (t is SideTarget) {
+            val a = t.fromEditorLine(startLine) ?: return
+            val b = t.fromEditorLine(endLine) ?: a
+            listOf(a.first.toReview() to (a.second..maxOf(a.second, b.second)))
+        } else rangesFor(t, clickedLine, startLine, endLine, hasSelection)
+        val ranges = raw.mapNotNull { (side, r) ->
+            val lines = ctx.lines(side) ?: return@mapNotNull null
+            val start = r.first + 1
+            val end = minOf(r.last + 1, lines.size)
+            if (sideOk[side] != true || start > end) null else AnchorRange(side, start, end, captureSnapshot(lines, start, end))
         }
-        val side = fromLine.first
-        val first = fromLine.second
-        val last = maxOf(first, to.second)
-        val path = (if (side == DiffSide.LEFT) change.oldPath else change.newPath) ?: return
-        val lines = sideLines(side)
-        val cap = Anchoring.capture(lines, first + 1, last + 1)
-        val anchor = Anchor(
-            AnchorScope.LINES, path, side.toReview(), first + 1, last + 1, cap.snippet, cap.before, cap.after, store.review().current.n,
-        )
+        if (ranges.isEmpty()) return
+        val anchor = Anchor.Lines(change.path, change.oldPath, review.pin, ranges)
 
         val host = JPanel(BorderLayout()).apply { isOpaque = false }
         var handle: Inline? = null
@@ -369,7 +458,7 @@ class DiffReviewController(
         val composer = InlineComposer(
             initial = null,
             onSave = { kind, body, rule ->
-                saving { store.addComment(kind, body, anchor, rule) }.also { err -> if (err == null) dismiss() }
+                if (service.addComment(kind, body, anchor, rule) != null) { dismiss(); null } else "Not saved: see the notification."
             },
             onCancel = ::dismiss,
         )
@@ -393,55 +482,53 @@ class DiffReviewController(
 
     // ---- hunks --------------------------------------------------------------------------------------------------
 
-    private fun lines(doc: Document, from: Int, to: Int): List<String> =
-        if (to <= from) emptyList() else DiffUtil.getLines(doc, from, to)
+    private fun interval(start0: Int, endExclusive0: Int): Interval? = if (endExclusive0 > start0) Interval(start0 + 1, endExclusive0) else null
+
+    /** The hunk of the viewer with the sides that have line features: a region mark exists only for lines of the format's line model. */
+    private fun hunkOf(old: Interval?, new: Interval?): Hunk? {
+        val h = Hunk(old.takeIf { sideOk[Side.OLD] == true }, new.takeIf { sideOk[Side.NEW] == true })
+        return h.takeIf { it.old != null || it.new != null }
+    }
 
     private fun computeHunks() {
-        val raw = ArrayList<Triple<Pair<List<String>, List<String>>, EditorTarget, Int>>()
+        val out = ArrayList<ViewerHunk>()
         when (viewer) {
             is SimpleDiffViewer -> {
                 val target = targets.last()
                 for (c in viewer.diffChanges) {
                     if (!c.isValid) continue
-                    val l = lines(viewer.document1(), c.getStartLine(DiffSide.LEFT), c.getEndLine(DiffSide.LEFT))
-                    val r = lines(viewer.document2(), c.getStartLine(DiffSide.RIGHT), c.getEndLine(DiffSide.RIGHT))
-                    raw += Triple(l to r, target, c.getStartLine(DiffSide.RIGHT))
+                    val h = hunkOf(
+                        interval(c.getStartLine(DiffSide.LEFT), c.getEndLine(DiffSide.LEFT)),
+                        interval(c.getStartLine(DiffSide.RIGHT), c.getEndLine(DiffSide.RIGHT)),
+                    ) ?: continue
+                    out += ViewerHunk(h, target, c.getStartLine(DiffSide.RIGHT))
                 }
             }
             is UnifiedDiffViewer -> {
                 val target = targets.first()
                 for (c in viewer.diffChanges.orEmpty()) {
                     val f = c.lineFragment
-                    val l = lines(viewer.getDocument(DiffSide.LEFT), f.startLine1, f.endLine1)
-                    val r = lines(viewer.getDocument(DiffSide.RIGHT), f.startLine2, f.endLine2)
-                    raw += Triple(l to r, target, c.line1)
+                    val h = hunkOf(interval(f.startLine1, f.endLine1), interval(f.startLine2, f.endLine2)) ?: continue
+                    out += ViewerHunk(h, target, c.line1)
                 }
             }
             is OnesideTextDiffViewer -> {
                 val doc = viewer.content.document
-                val all = lines(doc, 0, doc.lineCount)
-                val pair = if (viewer.side == DiffSide.LEFT) all to emptyList() else emptyList<String>() to all
-                raw += Triple(pair, targets.first(), 0)
+                val n = ctx.lines(viewer.side.toReview())?.size ?: 0
+                if (n > 0) {
+                    val whole = Interval(1, n)
+                    val h = if (viewer.side == DiffSide.LEFT) hunkOf(whole, null) else hunkOf(null, whole)
+                    if (h != null && doc.lineCount > 0) out += ViewerHunk(h, targets.first(), 0)
+                }
             }
         }
-        val fps = Fingerprints.hunks(raw.map { it.first })
-        hunks = raw.mapIndexed { i, t -> Hunk(fps[i], t.second, t.third) }
-        ctx.hunkFingerprints = fps
-        store.reportHunks(change.path, change.fingerprint, fps.size)
-    }
-
-    private fun SimpleDiffViewer.document1() = getContent1().document
-    private fun SimpleDiffViewer.document2() = getContent2().document
-
-    private fun isHunkViewed(h: Hunk): Boolean {
-        val p = store.progress(change.path)
-        return review.isViewed(change, p) || (p?.viewedHunks?.contains(h.fingerprint) == true)
+        hunks = out
     }
 
     private fun syncHunkMarkers() {
         hunkMarkers.forEach { (ed, hl) -> if (!ed.isDisposed) ed.markupModel.removeHighlighter(hl) }
         hunkMarkers.clear()
-        for (h in hunks) {
+        for ((i, h) in hunks.withIndex()) {
             val editor = h.target.editor
             val doc = editor.document
             if (doc.lineCount == 0) continue
@@ -449,21 +536,17 @@ class DiffReviewController(
             val hl = editor.markupModel.addRangeHighlighter(
                 null, doc.getLineStartOffset(line), doc.getLineEndOffset(line), HighlighterLayer.LAST, HighlighterTargetArea.LINES_IN_RANGE,
             )
-            hl.gutterIconRenderer = HunkRenderer(h.fingerprint, isHunkViewed(h)) { toggleHunk(h) }
+            val reviewed = service.isHunkReviewed(change, h.hunk)
+            hl.gutterIconRenderer = HunkRenderer("$i:${h.hunk}", reviewed) { toggleHunk(h) }
             hunkMarkers += editor to hl
         }
         // Hunk lines changed: re-seat the lane spacer so it shares a line with a hunk checkbox (gutter width is per line).
         hoverResets.forEach { it() }
     }
 
-    private fun toggleHunk(h: Hunk) {
-        val viewedNow = isHunkViewed(h)
-        val all = ctx.hunkFingerprints
-        saving {
-            // A file-level "viewed" mark implies all hunks; materialise that before un-viewing a single one.
-            if (viewedNow && review.isViewed(change)) store.setFileViewed(change.path, change.fingerprint, true, all)
-            store.setHunkViewed(change.path, change.fingerprint, h.fingerprint, !viewedNow, all)
-        }
+    private fun toggleHunk(h: ViewerHunk) {
+        val reviewedNow = service.isHunkReviewed(change, h.hunk)
+        service.setHunkReviewed(change, hunks.map { it.hunk }, h.hunk, !reviewedNow)
     }
 
     private class HunkRenderer(val key: String, val viewed: Boolean, val onClick: () -> Unit) : GutterIconRenderer() {

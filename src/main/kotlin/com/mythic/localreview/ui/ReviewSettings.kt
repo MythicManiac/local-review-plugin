@@ -45,7 +45,7 @@ class ReviewSettingsConfigurable : BoundSearchableConfigurable("Local Diff Revie
                 textFieldWithBrowseButton(FileChooserDescriptorFactory.createSingleFolderDescriptor().withTitle("Review Store Folder"))
                     .columns(40)
                     .bindText(settings::storeRootSetting)
-                    .comment("Each review is a git repository of plain JSON files in <folder>/<repo>/<review>. Leave blank for ~/.local-review. Sync it with any file sync tool or a git remote.")
+                    .comment("Each review group is a git repository in <folder>/<group>; a review is reviews/<id>/ in it: a review.json and one append-only event log per device. Leave blank for ~/.local-review. Share it with a git remote.")
             }
         }
     }

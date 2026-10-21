@@ -18,3 +18,17 @@ data class AnchorRange(val side: Side, val startLine: Int, val endLine: Int, val
 
 /** One range of a region mark: lines on one side, the blob they were read from, and the hash of those lines (ALGORITHMS 3). */
 data class MarkRange(val side: Side, val startLine: Int, val endLine: Int, val blob: String, val hash: String)
+
+/** Lines of context kept above and below an anchored range (SPEC 6.3: up to 3 each side). */
+const val CONTEXT_LINES = 3
+
+/** The snapshot of lines [start]..[end] (1-based, inclusive) of [lines], with up to [CONTEXT_LINES] lines of context on each side. */
+fun captureSnapshot(lines: List<String>, start: Int, end: Int): Snapshot {
+    val s = (start - 1).coerceIn(0, lines.size)
+    val e = end.coerceIn(s, lines.size)
+    return Snapshot(
+        lines = lines.subList(s, e).toList(),
+        before = lines.subList((s - CONTEXT_LINES).coerceAtLeast(0), s).toList(),
+        after = lines.subList(e, (e + CONTEXT_LINES).coerceAtMost(lines.size)).toList(),
+    )
+}

@@ -8,8 +8,8 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.util.Disposer
 import com.intellij.util.concurrency.AppExecutorUtil
-import com.mythic.localreview.core.ReviewGroups
 import com.mythic.localreview.core.SyncResult
+import com.mythic.localreview.store.ReviewGroups
 import git4idea.config.GitExecutableManager
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -48,7 +48,7 @@ class GroupSyncService : Disposable {
         "git"
     }
 
-    /** The groups of the configured store folder; also migrates the previous per-review layout on first use. */
+    /** The groups of the configured store folder. */
     @Synchronized
     fun groups(): ReviewGroups {
         val root = ReviewSettings.getInstance().storeRoot()
@@ -56,14 +56,7 @@ class GroupSyncService : Disposable {
         val key = "$root|$exe"
         if (groups == null || key != groupsKey) {
             groups?.close()
-            val g = ReviewGroups(root, exe) { name -> scheduleSync(name) }
-            try {
-                g.migrateLegacy()
-            } catch (e: Exception) {
-                log.warn("Migrating the previous review layout failed", e)
-                notify("Could not migrate reviews from the previous layout: ${e.message}", NotificationType.WARNING)
-            }
-            groups = g
+            groups = ReviewGroups(root, exe, onCommitted = { name -> scheduleSync(name) })
             groupsKey = key
         }
         return groups!!
@@ -128,9 +121,9 @@ class GroupSyncService : Disposable {
                 failureShown.remove(group)
                 if (r.conflicts.isNotEmpty()) {
                     notify(
-                        "Sync of group '$group': the same file was edited on two devices (${r.conflicts.size}). The newer edit was kept and the " +
-                            "other version was saved next to it as *.conflict-*.",
-                        NotificationType.WARNING,
+                        "Sync of group '$group': two devices changed ${r.conflicts.joinToString(", ")} differently; the versions were merged by the review " +
+                            "format's rules (the group created first is kept; other lines of the repository files are combined). No review data was lost.",
+                        NotificationType.INFORMATION,
                     )
                 }
             }

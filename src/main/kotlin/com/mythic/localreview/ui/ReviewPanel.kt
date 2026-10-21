@@ -13,10 +13,11 @@ import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
-import com.mythic.localreview.core.Comment
-import com.mythic.localreview.core.CommentStatus
 import com.mythic.localreview.core.SyncResult
-import com.mythic.localreview.core.FileChange
+import com.mythic.localreview.format.Annotation
+import com.mythic.localreview.format.ChangedFile
+import com.mythic.localreview.format.ReviewStatus
+import com.mythic.localreview.format.label
 import com.mythic.localreview.ui.diff.ReviewDiff
 import java.awt.BorderLayout
 import java.awt.CardLayout
@@ -24,8 +25,8 @@ import java.awt.FlowLayout
 import javax.swing.JPanel
 
 object ReviewDataKeys {
-    val SELECTED_FILES: DataKey<List<FileChange>> = DataKey.create("LocalReview.SelectedFiles")
-    val SELECTED_COMMENTS: DataKey<List<Comment>> = DataKey.create("LocalReview.SelectedComments")
+    val SELECTED_FILES: DataKey<List<ChangedFile>> = DataKey.create("LocalReview.SelectedFiles")
+    val SELECTED_COMMENTS: DataKey<List<Annotation>> = DataKey.create("LocalReview.SelectedComments")
 }
 
 /** The tool window content: toolbar, status header, and Changes / Comments tabs (or an empty state). */
@@ -75,11 +76,10 @@ class ReviewPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
             status.text = " "
             return
         }
-        val r = a.store.review()
-        val rev = r.current
+        val h = a.header
 
-        val open = a.store.comments().count { it.status == CommentStatus.OPEN }
-        val warn = a.store.commitError
+        val open = a.openComments().size
+        val warn = a.open.group.committer.lastError
         val saved = if (warn == null) "<span style='color:#59a869'>✓ saved</span>"
         else "<span style='color:#d9a343'>✓ saved to disk · git history: ${warn.take(80).replace("<", "&lt;")}</span>"
         fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;")
@@ -87,7 +87,6 @@ class ReviewPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
         val g = a.group
         val info = service.groupInfo
         val syncText = when {
-            g == null -> ""
             info?.remoteUrl == null -> " · group <b>${esc(g)}</b> · <span style='color:gray'>local only</span>"
             sync.isSyncing(g) -> " · group <b>${esc(g)}</b> · <span style='color:gray'>⇅ syncing…</span>"
             else -> {
@@ -101,8 +100,9 @@ class ReviewPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
             }
         }
         val problem = a.problem?.let { "<br><span style='color:#d9a343'>⚠ ${esc(it)}</span>" } ?: ""
-        status.text = "<html><b>${esc(r.title)}</b>" +
-            "<br><span style='color:gray'>${esc(r.baseRef)} (${rev.effectiveBaseSha.take(7)}) → ${esc(r.headRef)} (${rev.headSha.take(7)}) · revision ${rev.n}</span>" +
+        val review = if (h.status != ReviewStatus.OPEN) " <span style='color:gray'>[${h.status.label}]</span>" else ""
+        status.text = "<html><b>${esc(h.title)}</b>$review" +
+            "<br><span style='color:gray'>${esc(h.baseRef)} (${h.pin.baseSha.take(7)}) → ${esc(h.headRef)} (${h.pin.headSha.take(7)})</span>" +
             "<br>$open open comments · $saved$syncText$problem</html>"
     }
 

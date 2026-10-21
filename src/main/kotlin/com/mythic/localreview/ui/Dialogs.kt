@@ -17,8 +17,8 @@ import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
 import com.mythic.localreview.core.GitException
-import com.mythic.localreview.core.GroupInfo
-import com.mythic.localreview.core.ReviewGroups
+import com.mythic.localreview.store.GroupInfo
+import com.mythic.localreview.store.ReviewGroups
 import com.mythic.localreview.core.SshKeys
 import com.mythic.localreview.core.SyncResult
 import com.intellij.openapi.progress.ProgressManager
@@ -77,7 +77,7 @@ class NewReviewDialog(private val project: Project, private val service: ReviewS
         if (groups.list().isEmpty()) groups.ensureDefault()
         val names = groups.list().map { it.name }
         groupBox.model = DefaultComboBoxModel(names.toTypedArray())
-        val preferred = select ?: groups.groupFor(service.repoInfoOf(root)) ?: ReviewGroups.DEFAULT_GROUP
+        val preferred = select ?: groups.groupFor(service.repoRefOf(root)) ?: ReviewGroups.DEFAULT_GROUP
         groupBox.selectedItem = names.firstOrNull { it == preferred } ?: names.first()
     }
 

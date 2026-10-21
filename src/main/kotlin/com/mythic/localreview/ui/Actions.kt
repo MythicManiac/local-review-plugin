@@ -3,7 +3,6 @@ package com.mythic.localreview.ui
 import com.intellij.ide.actions.RevealFileAction
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
-import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.ToggleAction
 import com.intellij.openapi.application.ApplicationManager
@@ -16,21 +15,23 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.mythic.localreview.core.Anchor
-import com.mythic.localreview.core.AnchorScope
 import com.mythic.localreview.core.AtomicFiles
-import com.mythic.localreview.core.ReviewSummary
 import com.mythic.localreview.export.AgentPrompts
 import com.mythic.localreview.export.AgentsMd
 import com.mythic.localreview.export.ExportInput
 import com.mythic.localreview.export.JsonReport
 import com.mythic.localreview.export.MarkdownReport
+import com.mythic.localreview.format.Anchor
+import com.mythic.localreview.format.Decision
+import com.mythic.localreview.format.ReviewMode
+import com.mythic.localreview.format.ReviewStatus
+import com.mythic.localreview.format.label
+import com.mythic.localreview.store.ReviewSummary
 import com.mythic.localreview.ui.comments.CommentDialog
 import com.mythic.localreview.ui.diff.ReviewDiff
 import java.awt.datatransfer.StringSelection
 import java.io.IOException
 import java.nio.file.Files
-import java.nio.file.Path
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -73,34 +74,57 @@ class NewReviewAction : ReviewAction() {
         }
         val dlg = NewReviewDialog(project, service)
         if (!dlg.showAndGet()) return
-        runInBackground(project, "Creating review") { service.create(dlg.root, dlg.reviewTitle, dlg.baseRef, dlg.headRef, dlg.useMergeBase, dlg.groupName) }
+        val mode = if (dlg.useMergeBase) ReviewMode.MERGE_BASE else ReviewMode.DIRECT
+        runInBackground(project, "Creating review") { service.create(dlg.root, dlg.reviewTitle, dlg.baseRef, dlg.headRef, mode, dlg.groupName) }
     }
 }
 
 class OpenReviewAction : ReviewAction() {
+    /** One row of the chooser: a review, or the entry that lists the archived ones. */
+    private class Choice(val summary: ReviewSummary?, val archived: List<ReviewSummary> = emptyList())
+
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val service = ReviewService.getInstance(project)
         runInBackground(project, "Listing reviews") {
-            val reviews = service.listReviews()
+            val all = service.listReviews(includeArchived = true)
             ApplicationManager.getApplication().invokeLater {
-                if (reviews.isEmpty()) {
+                if (all.isEmpty()) {
                     Messages.showInfoMessage(project, "No reviews for this repository yet in ${ReviewSettings.getInstance().storeRoot()}.", "Local Diff Review")
                     return@invokeLater
                 }
-                JBPopupFactory.getInstance().createPopupChooserBuilder(reviews)
-                    .setTitle("Open Review")
-                    .setRenderer(object : com.intellij.ui.ColoredListCellRenderer<ReviewSummary>() {
-                        override fun customizeCellRenderer(l: JList<out ReviewSummary>, v: ReviewSummary, i: Int, s: Boolean, f: Boolean) {
-                            append("[${v.group}] ", com.intellij.ui.SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                            append(v.review.title)
-                            append("   ${v.review.baseRef} → ${v.review.headRef} · rev ${v.review.current.n} · ${v.review.createdAt.take(10)}", com.intellij.ui.SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                        }
-                    })
-                    .setItemChosenCallback { choice -> runInBackground(project, "Opening review") { service.open(choice) } }
-                    .createPopup().showCenteredInCurrentWindow(project)
+                val live = all.filter { it.status != ReviewStatus.ARCHIVED }
+                val archived = all.filter { it.status == ReviewStatus.ARCHIVED }
+                val rows = live.map { Choice(it) } + if (archived.isNotEmpty()) listOf(Choice(null, archived)) else emptyList()
+                choose(project, service, rows, "Open Review")
             }
         }
+    }
+
+    private fun choose(project: Project, service: ReviewService, rows: List<Choice>, title: String) {
+        JBPopupFactory.getInstance().createPopupChooserBuilder(rows)
+            .setTitle(title)
+            .setRenderer(object : com.intellij.ui.ColoredListCellRenderer<Choice>() {
+                override fun customizeCellRenderer(l: JList<out Choice>, v: Choice, i: Int, s: Boolean, f: Boolean) {
+                    val gray = com.intellij.ui.SimpleTextAttributes.GRAYED_ATTRIBUTES
+                    val r = v.summary
+                    if (r == null) {
+                        append("Archived reviews (${v.archived.size})…", gray)
+                        return
+                    }
+                    append("[${r.group}] ", gray)
+                    append(r.title)
+                    val m = r.meta
+                    val status = if (r.status != ReviewStatus.OPEN) " · ${r.status.label}" else ""
+                    append("   ${m.baseRef} → ${m.headRef}$status · ${Instant.ofEpochMilli(m.createdAt).toString().take(10)}", gray)
+                }
+            })
+            .setItemChosenCallback { choice ->
+                val summary = choice.summary
+                if (summary == null) choose(project, service, choice.archived.map { Choice(it) }, "Archived Reviews")
+                else runInBackground(project, "Opening review") { service.open(summary) }
+            }
+            .createPopup().showCenteredInCurrentWindow(project)
     }
 }
 
@@ -110,19 +134,46 @@ class CloseReviewAction : NeedsReviewAction() {
     }
 }
 
+/** Marks the review open, done or archived (`reviewStatusChanged`); an archived review is left out of the Open Review list but stays openable. */
+class ReviewStatusAction : NeedsReviewAction() {
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        val service = ReviewService.getInstance(project)
+        val current = service.active?.header?.status ?: return
+        JBPopupFactory.getInstance().createPopupChooserBuilder(ReviewStatus.entries)
+            .setTitle("Review Status")
+            .setRenderer(object : com.intellij.ui.ColoredListCellRenderer<ReviewStatus>() {
+                override fun customizeCellRenderer(l: JList<out ReviewStatus>, v: ReviewStatus, i: Int, s: Boolean, f: Boolean) {
+                    append(v.label + if (v == current) "  (current)" else "")
+                }
+            })
+            .setItemChosenCallback { status -> if (status != current) service.setReviewStatus(status) }
+            .createPopup().showCenteredInCurrentWindow(project)
+    }
+}
+
 class UpdateReviewAction : NeedsReviewAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val service = ReviewService.getInstance(project)
         runInBackground(project, "Updating review") {
-            val r = service.update()
+            val r = service.retarget()
             service.notify(
-                if (r.newRevision == null) "Review is already up to date with ${service.active?.store?.review()?.headRef}."
-                else "Updated to revision ${r.newRevision.n}: ${r.reanchored} comments re-anchored, ${r.outdated} outdated.",
+                if (!r.changed) "Review is already up to date with ${service.active?.header?.headRef}."
+                else "Updated to the new commits: ${r.outdated} comments are outdated, ${r.withSuggestion} of them with a suggested new place (right-click a comment to accept it).",
             )
         }
     }
 }
+
+/** The input of every export, built from what the review shows right now. */
+fun exportInput(a: ActiveReview) = ExportInput(
+    state = a.state,
+    changes = a.changes,
+    evaluation = a.analysis?.evaluation,
+    reviewed = a.changes.filter { a.isReviewed(it) }.map { it.path }.toSet(),
+    generatedAt = Instant.now().toString(),
+)
 
 class ExportReviewAction : NeedsReviewAction() {
     override fun actionPerformed(e: AnActionEvent) {
@@ -131,7 +182,8 @@ class ExportReviewAction : NeedsReviewAction() {
         val a = service.active ?: return
         val stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now())
         val input = exportInput(a)
-        val dlg = ExportDialog(project, a.store.dir.resolve("exports").resolve(stamp), AgentsMd.candidates(input.comments).isNotEmpty())
+        val rules = AgentsMd.candidates(input.comments)
+        val dlg = ExportDialog(project, a.open.dir.resolve("exports").resolve(stamp), rules.rules.isNotEmpty() || rules.needsWording.isNotEmpty())
         if (!dlg.showAndGet()) return
         val out = dlg.outputDir
         try {
@@ -143,7 +195,7 @@ class ExportReviewAction : NeedsReviewAction() {
             service.notify("Export failed: ${ex.message}", NotificationType.ERROR)
             return
         }
-        a.store.commitExternalChanges("Export review")
+        a.open.group.committer.request("Export review")
         service.notify(
             "Review exported to $out",
             NotificationType.INFORMATION,
@@ -153,14 +205,6 @@ class ExportReviewAction : NeedsReviewAction() {
         )
     }
 }
-
-fun exportInput(a: ActiveReview) = ExportInput(
-    review = a.store.review(),
-    comments = a.store.comments(),
-    changes = a.changes,
-    progress = a.store.allProgress().associateBy { it.path },
-    generatedAt = Instant.now().toString(),
-)
 
 class CopyAgentPromptAction : NeedsReviewAction("Copy Agent Prompt for Whole Review") {
     override fun actionPerformed(e: AnActionEvent) {
@@ -175,16 +219,24 @@ class ProposeAgentsMdAction : NeedsReviewAction() {
         val project = e.project ?: return
         val service = ReviewService.getInstance(project)
         val a = service.active ?: return
-        val rules = AgentsMd.candidates(a.store.comments())
-        if (rules.isEmpty()) {
-            service.notify("No comments are marked as AGENTS.md rule candidates yet. Tick \"Recurring pattern\" when writing a comment.", NotificationType.WARNING)
+        val candidates = AgentsMd.candidates(a.comments())
+        val wording = candidates.needsWording.size
+        if (candidates.rules.isEmpty()) {
+            service.notify(
+                if (wording > 0) "$wording comment(s) are flagged as recurring patterns but have no rule text yet. Edit them (right-click → Edit…) and write the rule, then propose again."
+                else "No comments are marked as AGENTS.md rule candidates yet. Tick \"Recurring pattern\" when writing a comment.",
+                NotificationType.WARNING,
+            )
             return
         }
         val file = a.git.toplevel().resolve("AGENTS.md")
         val existing = if (Files.exists(file)) Files.readString(file) else ""
-        val proposed = AgentsMd.propose(existing, rules)
+        val proposed = AgentsMd.propose(existing, candidates.rules)
+        val sources = candidates.rules.flatMap { it.sources }
         if (proposed == existing) {
-            service.notify("AGENTS.md already contains all ${rules.size} proposed rules.")
+            // Everything is in the file already: the candidates are applied, so they leave the inbox.
+            service.decideRules(sources, "AGENTS.md", Decision.APPLIED)
+            service.notify("AGENTS.md already contains all ${candidates.rules.size} proposed rules.")
             return
         }
         val dlg = AgentsMdDialog(project, "AGENTS.md", existing, proposed)
@@ -192,37 +244,35 @@ class ProposeAgentsMdAction : NeedsReviewAction() {
         try {
             AtomicFiles.write(file, dlg.finalText.toByteArray())
             LocalFileSystem.getInstance().refreshAndFindFileByNioFile(file)?.refresh(true, false)
-            service.notify("Wrote $file")
         } catch (ex: IOException) {
             service.notify("Could not write AGENTS.md: ${ex.message}", NotificationType.ERROR)
+            return
         }
+        service.decideRules(sources, "AGENTS.md", Decision.APPLIED)
+        service.notify("Wrote $file" + if (wording > 0) ". $wording more candidate(s) still need wording." else "")
     }
 }
 
 class AddReviewNoteAction : NeedsReviewAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val a = active(e) ?: return
+        active(e) ?: return
         val dlg = CommentDialog(project, "Comment on the whole review", null)
         if (!dlg.showAndGet()) return
-        try {
-            a.store.addComment(dlg.kind, dlg.text, Anchor(AnchorScope.REVIEW, revision = a.store.review().current.n), dlg.rule)
-        } catch (ex: IOException) {
-            ReviewService.getInstance(project).notify("Could not save: ${ex.message}", NotificationType.ERROR)
-        }
+        ReviewService.getInstance(project).addComment(dlg.kind, dlg.text, Anchor.Review, dlg.rule)
     }
 }
 
 class OpenFirstDiffAction : NeedsReviewAction() {
     override fun update(e: AnActionEvent) {
         super.update(e)
-        e.presentation.isEnabled = active(e)?.changes?.isNotEmpty() == true
+        e.presentation.isEnabled = active(e)?.let { it.verified && it.changes.isNotEmpty() } == true
     }
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val a = active(e) ?: return
-        val first = a.changes.firstOrNull { !a.isViewed(it) } ?: a.changes.firstOrNull() ?: return
+        val first = a.changes.firstOrNull { !a.isReviewed(it) } ?: a.changes.firstOrNull() ?: return
         ReviewDiff.open(project, first)
     }
 }
@@ -260,12 +310,10 @@ abstract class MarkViewedAction(private val viewed: Boolean, text: String) : Rev
     }
 
     override fun actionPerformed(e: AnActionEvent) {
-        val a = active(e) ?: return
-        try {
-            for (c in e.getData(ReviewDataKeys.SELECTED_FILES).orEmpty()) a.store.setFileViewed(c.path, c.fingerprint, viewed)
-        } catch (ex: IOException) {
-            ReviewService.getInstance(e.project ?: return).notify("Could not save: ${ex.message}", NotificationType.ERROR)
-        }
+        val project = e.project ?: return
+        val files = e.getData(ReviewDataKeys.SELECTED_FILES).orEmpty()
+        // Reads blobs to find the hunks, so not on the UI thread.
+        ApplicationManager.getApplication().executeOnPooledThread { ReviewService.getInstance(project).setFilesReviewed(files, viewed) }
     }
 }
 
@@ -283,15 +331,9 @@ class CommentOnSelectedFileAction : ReviewAction("Add Comment on File…") {
         val c = e.getData(ReviewDataKeys.SELECTED_FILES)?.singleOrNull() ?: return
         val dlg = CommentDialog(project, "Comment on ${c.path}", null)
         if (!dlg.showAndGet()) return
-        val side = if (c.newPath != null) com.mythic.localreview.core.Side.HEAD else com.mythic.localreview.core.Side.BASE
-        try {
-            a.store.addComment(dlg.kind, dlg.text, Anchor(AnchorScope.FILE, c.newPath ?: c.oldPath, side, revision = a.store.review().current.n), dlg.rule)
-        } catch (ex: IOException) {
-            ReviewService.getInstance(project).notify("Could not save: ${ex.message}", NotificationType.ERROR)
-        }
+        ReviewService.getInstance(project).addComment(dlg.kind, dlg.text, Anchor.File(c.path, c.oldPath, a.pin), dlg.rule)
     }
 }
-
 
 class ManageGroupsAction : ReviewAction() {
     override fun actionPerformed(e: AnActionEvent) {

@@ -9,18 +9,21 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.util.ui.UIUtil
-import com.mythic.localreview.core.Anchor
-import com.mythic.localreview.core.AnchorScope
-import com.mythic.localreview.core.Anchoring
-import com.mythic.localreview.core.CommentKind
-import com.mythic.localreview.core.ReviewRepository
-import com.mythic.localreview.core.Side
 import com.mythic.localreview.core.TestRepo
 import com.mythic.localreview.core.lines
 import com.mythic.localreview.core.tempDir
+import com.mythic.localreview.format.Anchor
+import com.mythic.localreview.format.AnchorRange
+import com.mythic.localreview.format.CommentState
+import com.mythic.localreview.format.FileMarkState
+import com.mythic.localreview.format.Kind
+import com.mythic.localreview.format.ReviewMode
+import com.mythic.localreview.format.Side
+import com.mythic.localreview.format.captureSnapshot
+import com.mythic.localreview.store.ReviewFactory
 import com.mythic.localreview.ui.diff.FileDiffProducer
 
-/** Renders a real review diff in the platform diff viewer and checks what our DiffExtension attaches. */
+/** Renders a real review diff in the platform diff viewer and checks what our DiffExtension and the review service do with it. */
 class DiffIntegrationTest : BasePlatformTestCase() {
     private var savedRoot = ""
 
@@ -33,6 +36,7 @@ class DiffIntegrationTest : BasePlatformTestCase() {
 
     override fun tearDown() {
         try {
+            ReviewService.getInstance(project).close()
             ReviewSettings.getInstance().storeRootSetting = savedRoot
         } finally {
             super.tearDown()
@@ -47,6 +51,33 @@ class DiffIntegrationTest : BasePlatformTestCase() {
 
     private fun gutterIcons(e: Editor) = e.markupModel.allHighlighters.count { it.gutterIconRenderer != null }
 
+    /** Pumps the UI thread until [condition] holds: analysis and writes finish on other threads. */
+    private fun waitFor(what: String, condition: () -> Boolean) {
+        val deadline = System.nanoTime() + 20_000_000_000L
+        while (!condition()) {
+            UIUtil.dispatchAllInvocationEvents()
+            check(System.nanoTime() < deadline) { "timed out waiting for $what" }
+            Thread.sleep(20)
+        }
+    }
+
+    private fun activate(repo: TestRepo): ActiveReview {
+        val service = ReviewService.getInstance(project)
+        val groups = service.groups()
+        val group = groups.reviewGroup(groups.create("g"))
+        val open = group.create(ReviewFactory.newMeta(repo.git, "T", "master", "feature", ReviewMode.MERGE_BASE, group.deviceId, System.currentTimeMillis()))
+        service.activate(open, repo.dir, "g")
+        val review = service.active!!
+        waitFor("the analysis") { review.analysis != null }
+        return review
+    }
+
+    private fun lineComment(review: ActiveReview, path: String, line: Int): Anchor.Lines {
+        val file = review.file(path)!!
+        val lines = review.lines!!.of(file, Side.NEW)!!
+        return Anchor.Lines(path, file.oldPath, review.pin, listOf(AnchorRange(Side.NEW, line, line, captureSnapshot(lines, line, line))))
+    }
+
     fun testCommentsAndHunkMarkersRenderAndPersist() {
         val repo = TestRepo()
         repo.write("src/a.txt", body(30))
@@ -56,19 +87,12 @@ class DiffIntegrationTest : BasePlatformTestCase() {
         repo.commit("work")
 
         val service = ReviewService.getInstance(project)
-        val store = ReviewRepository(tempDir(), "g", null).create(repo.git, "T", "master", "feature")
-        service.activate(store, repo.dir)
-        val review = service.active!!
+        val review = activate(repo)
         val change = review.changes.single()
 
-        val headLines = Anchoring.splitLines(String(repo.git.showFile(store.review().current.headSha, "src/a.txt")!!))
-        val cap = Anchoring.capture(headLines, 5, 5)
-        val comment = store.addComment(
-            CommentKind.CHANGE_REQUEST, "Please revert this",
-            Anchor(AnchorScope.LINES, "src/a.txt", Side.HEAD, 5, 5, cap.snippet, cap.before, cap.after, 1),
-        )
+        val first = service.addComment(Kind.CHANGE_REQUEST, "Please revert this", lineComment(review, "src/a.txt", 5), RuleInput(false, null))!!
         // A comment on a different file must not show up here.
-        store.addComment(CommentKind.NOTE, "elsewhere", Anchor(AnchorScope.FILE, "other.txt", Side.HEAD, revision = 1))
+        service.addComment(Kind.COMMENT, "elsewhere", Anchor.File("other.txt", null, review.pin), RuleInput(false, null))
 
         val request = FileDiffProducer(project, review, change, DiffSide.RIGHT to 4).process(UserDataHolderBase(), EmptyProgressIndicator())
         val disposable = Disposer.newDisposable()
@@ -83,56 +107,141 @@ class DiffIntegrationTest : BasePlatformTestCase() {
             assertEquals(0, inlayCount(left))
             assertTrue("hunk markers for the 2 changes on the right", gutterIcons(right) >= 2)
 
-            // Hunk count is recorded for the tree's "n/m hunks" display.
-            assertEquals(2, store.progress("src/a.txt")?.hunkCount)
-
             // Mutations from elsewhere (e.g. the comments tab) re-render live.
-            store.addComment(
-                CommentKind.QUESTION, "why?",
-                Anchor(AnchorScope.LINES, "src/a.txt", Side.HEAD, 20, 20, listOf("line 20 changed"), emptyList(), emptyList(), 1),
-            )
-            UIUtil.dispatchAllInvocationEvents()
-            assertEquals(2, inlayCount(right))
+            service.addComment(Kind.QUESTION, "why?", lineComment(review, "src/a.txt", 20), RuleInput(false, null))
+            waitFor("the second inlay") { UIUtil.dispatchAllInvocationEvents(); inlayCount(right) == 2 }
 
-            store.deleteComment(comment.id)
-            UIUtil.dispatchAllInvocationEvents()
-            assertEquals("tombstoned comment disappears from the diff", 1, inlayCount(right))
-            store.restoreComment(comment.id)
-            UIUtil.dispatchAllInvocationEvents()
-            assertEquals(2, inlayCount(right))
+            val comment = review.state.annotation(first)!!
+            service.deleteComment(comment)
+            waitFor("the tombstoned comment to leave the diff") { UIUtil.dispatchAllInvocationEvents(); inlayCount(right) == 1 }
+            service.restoreComment(comment)
+            waitFor("the restored comment") { UIUtil.dispatchAllInvocationEvents(); inlayCount(right) == 2 }
+
+            // A reply is part of the card.
+            assertTrue(service.addReply(review.state.annotation(first)!!, "because"))
+            waitFor("the reply to be saved") { review.state.annotation(first)!!.replies.size == 1 }
         } finally {
             Disposer.dispose(disposable)
-            store.close()
         }
     }
 
-    fun testHunkViewedStateDrivesFileViewedAndInvalidatesOnChange() {
+    fun testViewerIsFedTheLinesOfTheFormatNotTheIdesOwnDecoding() {
+        val repo = TestRepo()
+        // A byte order mark and CRLF line ends: the IDE would drop the mark and normalise the ends; the format's line model does the same, so the numbers agree.
+        repo.git.run("config", "core.autocrlf", "false")
+        java.nio.file.Files.write(repo.dir.resolve("a.txt"), "\uFEFFone\r\ntwo\r\nthree\r\n".toByteArray())
+        repo.commit("base")
+        repo.branch("feature")
+        java.nio.file.Files.write(repo.dir.resolve("a.txt"), "\uFEFFone\r\ntwo changed\r\nthree\r\n".toByteArray())
+        repo.commit("work")
+
+        val review = activate(repo)
+        val change = review.changes.single()
+        assertEquals(listOf("one", "two changed", "three"), review.lines!!.of(change, Side.NEW)!!.toList())
+
+        val request = FileDiffProducer(project, review, change, null).process(UserDataHolderBase(), EmptyProgressIndicator())
+        val disposable = Disposer.newDisposable()
+        try {
+            DiffManager.getInstance().createRequestPanel(project, disposable, null).setRequest(request)
+            UIUtil.dispatchAllInvocationEvents()
+            val right = editorsOf().first { it.document.text.contains("two changed") }
+            assertEquals("no byte order mark, LF ends, as the format counts lines", "one\ntwo changed\nthree\n", right.document.text)
+        } finally {
+            Disposer.dispose(disposable)
+        }
+    }
+
+    fun testFileMarkAndHunkMarksAgreeAndTheMarkGoesStaleOnANewCommit() {
         val repo = TestRepo()
         repo.write("a.txt", body(30))
         repo.commit("base")
         repo.branch("feature")
-        repo.write("a.txt", body(30).replace("line 5\n", "line 5 changed\n"))
+        repo.write("a.txt", body(30).replace("line 5\n", "line 5 changed\n").replace("line 25\n", "line 25 changed\n"))
         repo.commit("work")
 
         val service = ReviewService.getInstance(project)
-        val store = ReviewRepository(tempDir(), "g", null).create(repo.git, "T", "master", "feature")
-        service.activate(store, repo.dir)
-        val review = service.active!!
+        val review = activate(repo)
         val change = review.changes.single()
-        assertFalse(review.isViewed(change))
+        val hunks = review.changedLines(change)!!.hunks
+        assertEquals("two separate edits are two hunks", 2, hunks.size)
+        assertFalse(review.isReviewed(change))
 
-        store.setFileViewed(change.path, change.fingerprint, true)
-        assertTrue(review.isViewed(change))
+        // Marking one hunk reviews just its lines; the file is not reviewed yet.
+        assertTrue(service.setHunkReviewed(change, hunks, hunks[0], true))
+        waitFor("the first hunk") { review.progress("a.txt")?.reviewed == 2 }
+        assertTrue(service.isHunkReviewed(change, hunks[0]))
+        assertFalse(service.isHunkReviewed(change, hunks[1]))
+        assertFalse(review.isReviewed(change))
+        assertTrue("no file mark for half a file", review.state.fileMarks.isEmpty())
 
-        // New commit changes the file's diff -> fingerprint differs -> the old mark no longer counts, and says why.
-        repo.write("a.txt", body(30).replace("line 5\n", "line 5 changed again\n"))
+        // Marking the last one completes the file, and the file mark is written too.
+        assertTrue(service.setHunkReviewed(change, hunks, hunks[1], true))
+        waitFor("the file to count as reviewed") { review.isReviewed(change) }
+        assertEquals(listOf("a.txt"), review.state.fileMarks.map { it.path })
+        assertEquals(FileMarkState.VALID, review.fileMark("a.txt"))
+
+        // Un-marking a hunk of a file that has its mark clears the mark but keeps the other hunk's region.
+        assertTrue(service.setHunkReviewed(change, hunks, hunks[0], false))
+        waitFor("the file to stop counting as reviewed") { !review.isReviewed(change) && review.fileMark("a.txt") == null }
+        assertTrue(review.state.fileMarks.isEmpty())
+        assertFalse(service.isHunkReviewed(change, hunks[0]))
+        assertTrue(service.isHunkReviewed(change, hunks[1]))
+
+        // The tree's checkbox marks the whole file, and a new commit that changes it makes the mark stale rather than silently valid.
+        assertTrue(service.setFilesReviewed(listOf(change), true))
+        waitFor("the file reviewed again") { review.isReviewed(change) }
+        repo.write("a.txt", body(30).replace("line 5\n", "line 5 changed again\n").replace("line 25\n", "line 25 changed\n"))
         repo.commit("more work")
-        service.update()
+        val result = service.retarget()
+        assertTrue(result.changed)
         val after = service.active!!
+        waitFor("the analysis of the new commit") { after.analysis != null }
         val changed = after.changes.single()
-        assertFalse(change.fingerprint == changed.fingerprint)
-        assertFalse(after.isViewed(changed))
+        assertTrue("its change key moved", changed.changeKey != change.changeKey)
+        assertEquals(FileMarkState.STALE, after.fileMark("a.txt"))
+        assertFalse(after.isReviewed(changed))
         assertTrue(after.isStale(changed))
-        store.close()
+        // The untouched hunk is still reviewed (its lines moved nowhere), the edited one is not.
+        val progress = after.progress("a.txt")!!
+        assertTrue("some of the file is still covered: ${progress}", progress.reviewed in 1 until progress.changed)
     }
+
+    fun testAnOutdatedCommentGetsASuggestionAndAcceptingItMovesIt() {
+        val repo = TestRepo()
+        repo.write("a.txt", body(30))
+        repo.commit("base")
+        repo.branch("feature")
+        repo.write("a.txt", body(30).replace("line 10\n", "line 10 changed\n"))
+        repo.commit("work")
+
+        val service = ReviewService.getInstance(project)
+        val review = activate(repo)
+        val id = service.addComment(Kind.CHANGE_REQUEST, "check this", lineComment(review, "a.txt", 10), RuleInput(true, null))!!
+
+        // Two lines are added above it: the code moved to line 12, and the comment's numbers are now wrong.
+        repo.write("a.txt", "new 1\nnew 2\n" + body(30).replace("line 10\n", "line 10 changed\n"))
+        repo.commit("more work")
+        val result = service.retarget()
+        assertEquals(1, result.outdated)
+        assertEquals(1, result.withSuggestion)
+        val after = service.active!!
+        waitFor("the analysis of the new commit") { after.analysis != null }
+        val c = after.state.annotation(id)!!
+        val state = after.commentState(c)
+        assertTrue("outdated with a suggestion: $state", state is CommentState.Outdated && state.suggestion != null)
+        assertEquals(12, (after.suggestionOf(c)!!.ranges.single()).startLine)
+        // Nothing moved by itself.
+        assertEquals(10, (c.anchor as Anchor.Lines).ranges.single().startLine)
+
+        assertTrue(service.acceptSuggestion(c))
+        waitFor("the comment to be current") { after.state.annotation(id)!!.let { after.commentState(it) == CommentState.Current } }
+        val moved = after.state.annotation(id)!!.anchor as Anchor.Lines
+        assertEquals(12, moved.ranges.single().startLine)
+        assertEquals(listOf("line 10 changed"), moved.ranges.single().snapshot.lines)
+        assertEquals(after.pin, moved.pin)
+        // The tag the user set and the text survived the move.
+        assertTrue(after.state.annotation(id)!!.isRuleCandidate)
+        assertEquals("check this", after.state.annotation(id)!!.body)
+    }
+
 }

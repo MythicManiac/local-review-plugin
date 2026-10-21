@@ -1,8 +1,8 @@
 package com.mythic.localreview.ui
 
 import com.intellij.icons.AllIcons
-import com.intellij.ide.util.treeView.NodeRenderer
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.FileStatus
@@ -15,8 +15,8 @@ import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.tree.TreeUtil
-import com.mythic.localreview.core.ChangeStatus
-import com.mythic.localreview.core.FileChange
+import com.mythic.localreview.format.AnnotationStatus
+import com.mythic.localreview.format.ChangedFile
 import java.awt.BorderLayout
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
@@ -26,27 +26,26 @@ import javax.swing.JPanel
 import javax.swing.JTree
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
-import javax.swing.tree.TreePath
 
 /** Directory node; checkbox state is derived from its descendants. */
 class DirNode(val label: String) : CheckedTreeNode(label)
 
-class FileNode(val change: FileChange) : CheckedTreeNode(change)
+class FileNode(val change: ChangedFile) : CheckedTreeNode(change)
 
 /**
- * The review's changed files as a directory tree (file-structure changes are visible as A/D/R status + rename arrows),
- * with a "viewed" checkbox per file/directory, hunk progress and comment counts.
+ * The review's changed files as a directory tree (file-structure changes are visible as A/D/R status + rename arrows), with a "reviewed" checkbox
+ * per file/directory, progress by changed lines and comment counts. Progress is computed in the background; until it is there the tree says so,
+ * and when the code is not available here it says "unverified" instead of showing marks as valid or stale.
  */
 class ChangesTreePanel(
     private val project: Project,
     private val service: ReviewService,
-    private val onOpen: (FileChange) -> Unit,
+    private val onOpen: (ChangedFile) -> Unit,
 ) : JPanel(BorderLayout()), Disposable, com.intellij.openapi.actionSystem.UiDataProvider {
 
     override fun uiDataSnapshot(sink: com.intellij.openapi.actionSystem.DataSink) {
         sink[ReviewDataKeys.SELECTED_FILES] = selectedFiles()
     }
-
 
     private val root = CheckedTreeNode(null)
     private var rebuilding = false
@@ -97,7 +96,7 @@ class ChangesTreePanel(
 
     val component get() = tree
 
-    fun selectedFiles(): List<FileChange> =
+    fun selectedFiles(): List<ChangedFile> =
         tree.selectionPaths.orEmpty().flatMap { leaves(it.lastPathComponent as DefaultMutableTreeNode) }.map { it.change }.distinctBy { it.path }
 
     private fun leaves(n: DefaultMutableTreeNode): List<FileNode> =
@@ -113,14 +112,10 @@ class ChangesTreePanel(
         TreeUtil.selectNode(tree, node)
     }
 
+    /** Checking a file or folder marks every file below it: the file mark and a region mark per hunk. Off the UI thread: it reads blobs. */
     private fun applyViewed(node: CheckedTreeNode, viewed: Boolean) {
-        val a = service.active ?: return
-        for (leaf in leaves(node)) {
-            val c = leaf.change
-            // Hunk fingerprints are only known once a file has been opened; marking by file is enough, hunks follow
-            // from the file-level mark when the diff is opened (see DiffReviewController).
-            a.store.setFileViewed(c.path, c.fingerprint, viewed)
-        }
+        val files = leaves(node).map { it.change }
+        ApplicationManager.getApplication().executeOnPooledThread { service.setFilesReviewed(files, viewed) }
     }
 
     // ---- model ------------------------------------------------------------------------------------------------
@@ -134,18 +129,23 @@ class ChangesTreePanel(
             if (a == null) {
                 summary.text = "No review open"
             } else {
-                val changes = a.changes.filter { !(ReviewUiState.hideViewed && a.isViewed(it)) }
+                val changes = a.changes.filter { !(ReviewUiState.hideViewed && a.isReviewed(it)) }
                 build(changes)
-                val viewed = a.changes.count { a.isViewed(it) }
+                val viewed = a.changes.count { a.isReviewed(it) }
                 val counts = a.changes.groupingBy { it.status }.eachCount()
                 val parts = listOfNotNull(
-                    counts[ChangeStatus.ADDED]?.let { "+$it added" },
-                    counts[ChangeStatus.MODIFIED]?.let { "~$it modified" },
-                    counts[ChangeStatus.DELETED]?.let { "-$it deleted" },
-                    counts[ChangeStatus.RENAMED]?.let { "$it renamed" },
+                    counts["added"]?.let { "+$it added" },
+                    counts["modified"]?.let { "~$it modified" },
+                    counts["deleted"]?.let { "-$it deleted" },
+                    counts["renamed"]?.let { "$it renamed" },
                 )
-                summary.text = "<html>$viewed / ${a.changes.size} files viewed" +
-                    (if (parts.isNotEmpty()) " &nbsp;·&nbsp; <span style='color:gray'>${parts.joinToString(", ")}</span>" else "") + "</html>"
+                val note = when {
+                    !a.verified -> " &nbsp;·&nbsp; <span style='color:#d9a343'>unverified: the code is not on this machine</span>"
+                    a.analysis == null -> " &nbsp;·&nbsp; <span style='color:gray'>calculating…</span>"
+                    else -> ""
+                }
+                summary.text = "<html>${if (a.verified) "$viewed / ${a.changes.size} files reviewed" else "${a.changes.size} files"}" +
+                    (if (parts.isNotEmpty()) " &nbsp;·&nbsp; <span style='color:gray'>${parts.joinToString(", ")}</span>" else "") + note + "</html>"
             }
             (tree.model as DefaultTreeModel).reload()
             if (!state.isEmpty) state.applyTo(tree, root) else TreeUtil.expandAll(tree)
@@ -159,7 +159,7 @@ class ChangesTreePanel(
     private fun syncChecks(node: DefaultMutableTreeNode): Boolean {
         val a = service.active
         if (node is FileNode) {
-            val viewed = a?.isViewed(node.change) == true
+            val viewed = a?.isReviewed(node.change) == true
             node.isChecked = viewed
             return viewed
         }
@@ -169,7 +169,7 @@ class ChangesTreePanel(
         return all
     }
 
-    private fun build(changes: List<FileChange>) {
+    private fun build(changes: List<ChangedFile>) {
         val dirs = HashMap<String, DefaultMutableTreeNode>()
         fun dirNode(path: String): DefaultMutableTreeNode {
             if (path.isEmpty()) return root
@@ -208,35 +208,30 @@ class ChangesTreePanel(
 
     // ---- rendering ---------------------------------------------------------------------------------------------
 
-    private fun renderFile(r: ColoredTreeCellRenderer, c: FileChange) {
+    private fun renderFile(r: ColoredTreeCellRenderer, c: ChangedFile) {
         val a = service.active
         val name = c.path.substringAfterLast('/')
         r.icon = FileTypeManager.getInstance().getFileTypeByFileName(name).icon
-        val viewed = a?.isViewed(c) == true
+        val viewed = a?.isReviewed(c) == true
         val color = when (c.status) {
-            ChangeStatus.ADDED -> FileStatus.ADDED.color
-            ChangeStatus.DELETED -> FileStatus.DELETED.color
-            ChangeStatus.MODIFIED, ChangeStatus.TYPE_CHANGED -> FileStatus.MODIFIED.color
-            ChangeStatus.RENAMED, ChangeStatus.COPIED -> FileStatus.MODIFIED.color
+            "added" -> FileStatus.ADDED.color
+            "deleted" -> FileStatus.DELETED.color
+            else -> FileStatus.MODIFIED.color
         }
-        val style = when {
-            viewed -> SimpleTextAttributes.STYLE_PLAIN
-            else -> SimpleTextAttributes.STYLE_BOLD
-        }
+        val style = if (viewed) SimpleTextAttributes.STYLE_PLAIN else SimpleTextAttributes.STYLE_BOLD
         val base = SimpleTextAttributes(style, if (viewed) null else color)
         r.append(name, if (viewed) SimpleTextAttributes.GRAYED_ATTRIBUTES else base)
-        r.append("  ${c.status.letter}", SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, color))
-        if (c.status == ChangeStatus.RENAMED || c.status == ChangeStatus.COPIED) {
+        r.append("  ${c.letter}", SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, color))
+        if (c.oldPath != null && (c.status == "renamed" || c.status == "copied")) {
             r.append("  ← ${c.oldPath}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
         }
         if (a != null) {
-            val p = a.store.progress(c.path)
-            if (a.isStale(c, p)) r.append("  changed since viewed", SimpleTextAttributes.ERROR_ATTRIBUTES)
-            else if (!viewed && p?.hunkCount != null && p.hunkCountFingerprint == c.fingerprint && p.viewedHunks.isNotEmpty()) {
-                val done = p.viewedHunks.size.coerceAtMost(p.hunkCount)
-                r.append("  $done/${p.hunkCount} hunks", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+            if (a.isStale(c)) r.append("  changed since reviewed", SimpleTextAttributes.ERROR_ATTRIBUTES)
+            else {
+                val p = a.progress(c.path)
+                if (!viewed && p != null && p.reviewed > 0) r.append("  ${p.reviewed}/${p.changed} lines", SimpleTextAttributes.GRAYED_ATTRIBUTES)
             }
-            val open = a.store.comments().count { it.status == com.mythic.localreview.core.CommentStatus.OPEN && a.fileOf(it)?.path == c.path }
+            val open = a.comments().count { it.status == AnnotationStatus.OPEN && a.fileOf(it)?.path == c.path }
             if (open > 0) r.append("  💬 $open", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
         }
     }
