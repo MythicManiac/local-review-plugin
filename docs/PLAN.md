@@ -25,12 +25,27 @@ Status legend: `[ ]` todo, `[x]` done. Each phase ends with a commit.
 - [x] Optional remote per group, background auto-sync, conflict-safe merge, live reload after pull
 - [x] Group UI (picker, manage dialog, sync action, header status), one-time migration of the old layout
 
+## Follow-up: the Local Review state format, 0.2.0 (done)
+
+Adopted the frozen specification (`spec/` submodule, tag `baseline-1`) on branch `format-v2`:
+
+- [x] P1 Core algorithms (line model, hashing, trim set, intervals, mark relocation, comment location, repository-file rules), every vector passing
+- [x] P2 Event model, tolerant reader, fold and evaluation; `examples/state` folds and evaluates to `examples/expected`
+- [x] P3 Event log writer (per-event device lock, tail read, fsync), per-machine device id with a machine fingerprint
+- [x] P4 Group store, repository files with the effective-rules check, pinned change-set command, the three sync resolutions
+- [x] P5 Import of 0.1.0 reviews (canonical `review.json`, deterministic event ids)
+- [x] P6 UI: two-range comments, region marks, background progress, replies, review status, rule decisions, outdated + accept suggestion
+- [x] P7 Docs, changelog, version 0.2.0
+
 ## Verification done
 
-* 46 automated tests (incl. two-device sync against a real bare remote, conflict convergence, migration)
-* (earlier) 35 automated tests (core store/anchoring/lifecycle with real git, export, headless platform test that renders a real diff viewer and asserts inlays/markers).
-* Manual smoke in the sandbox IDE (`runIde`): create review, tree statuses, open diff, add/edit comment, hunk + file marks, rule candidate, AGENTS.md proposal/write,
-  export, Update Review re-anchoring, forced IDE kill then automatic resume with all data intact.
+* Conformance: all spec vectors, the `examples/` fold and evaluation, and the submodule drift test.
+* Automated tests with real git and bare remotes: two-device sync, the three conflict resolutions and abort on anything else, three JVMs appending to one log,
+  a lock held by another process, the pinned change-set command under hostile git configuration, import against files written by 0.1.0's own serializers
+  (byte-identical output from two devices), export, and headless platform tests of the diff viewer (comments, hunk marks, stale marks, accepting a suggestion).
+* Plugin verifier: compatible with PyCharm and IntelliJ IDEA 2026.2.3, no deprecated or internal API usages.
+* Manual smoke in the sandbox IDE (`runIde`) on a demo group in the 0.1.0 layout: automatic import with a notification, open, inline comments, hunk checkbox writing region and file marks,
+  reply, review status.
 
 ## Known limits / ideas not done
 
@@ -39,4 +54,8 @@ Status legend: `[ ]` todo, `[x]` done. Each phase ends with a commit.
 * Drafts being typed are not auto-saved until you press save (saved comments always are).
 * Agent replies are not imported back; the JSON export carries stable ids so this can be added.
 * Diff viewer tab is closed on Update Review (it shows a single revision).
-* Hunk fingerprints come from the viewer's diff, so toggling whitespace-ignore can change hunk boundaries.
+* Hunks come from the IDE's comparison, which differs from another tool's; only line ranges are stored, so two tools can show different hunks for one file.
+* A mark on a single repeated line (a blank line, `}`) goes stale when the file changes, because a mark is only relocated when the lines occur exactly once.
+* A review can be renamed (`reviewRenamed` is written by the service) but there is no action for it yet.
+* Re-anchoring by picking lines yourself (`method: picked`) is not offered; accepting the suggestion is.
+* A stale `.git/index.lock` left by a crashed git is reported with git's message; nothing removes it.

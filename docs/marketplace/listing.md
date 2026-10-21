@@ -8,7 +8,7 @@ Everything the JetBrains Marketplace upload form and plugin page ask for, in one
 |-------|-------|---------------------|
 | Name | **Local Diff Review** (17 chars; checked unused on the Marketplace on 2026-10-14) | `gradle.properties` `pluginName` |
 | Plugin ID | `com.mythic.localreview` (**permanent** after the first upload) | `plugin.xml` |
-| Version | `0.1.0` | `gradle.properties` `pluginVersion` |
+| Version | `0.2.0` | `gradle.properties` `pluginVersion` |
 | Price | Free | n/a |
 | License | Apache-2.0 | `LICENSE`; select "Apache-2.0" in the upload form |
 | Source code URL | https://github.com/MythicManiac/local-review-plugin (**must be public before submitting**) | `gradle.properties` `pluginUrl` + upload form |

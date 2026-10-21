@@ -6,16 +6,16 @@
 <ul>
   <li><b>Compare any two points</b>: branches, tags or commits. The default is pull request style, diffing from the merge base. Commits are pinned, so the review does not shift while the branch moves.</li>
   <li><b>See the whole change</b>: a file tree with added, modified, deleted and renamed files, and the IDE's own diff viewer (side by side or unified) for the content.</li>
-  <li><b>Annotate code</b>: add change requests, questions or notes to a line, a selected range, a file or the whole review. Resolve, reopen, edit or delete them; deleted comments are kept and can be restored.</li>
-  <li><b>Track progress</b>: mark files and individual hunks as reviewed. A mark clears itself when the code under it changes, and the tree shows which files changed since you viewed them.</li>
+  <li><b>Annotate code</b>: add change requests, questions or notes to a line, a selected range (in a unified diff, one range per side), a file or the whole review. Reply, resolve, reopen, edit or delete them; deleted comments are kept and can be restored.</li>
+  <li><b>Track progress</b>: mark files and individual hunks as reviewed. A mark follows its lines when the file changes and shows as stale where they changed; the tree shows progress by changed lines and which files changed since you viewed them.</li>
   <li><b>Pick up where you left off</b>: reviews are saved the moment you save a comment and reopen automatically after a restart or crash.</li>
-  <li><b>Follow a moving branch</b>: <i>Update Review</i> pins the new commits and re-anchors your comments to the new code. Comments whose code was rewritten are flagged as outdated instead of being lost.</li>
-  <li><b>Hand over your findings</b>: export a Markdown report, a machine-readable JSON file, and a ready-to-paste prompt for an AI agent. Copy a single comment as a prompt.</li>
-  <li><b>Improve your agent rules</b>: mark a comment as a recurring pattern and get a proposed update to <code>AGENTS.md</code> that you can edit before it is written.</li>
+  <li><b>Follow a moving branch</b>: <i>Update Review</i> pins the new commits. Each comment is checked against the new code; one whose lines moved or changed is marked outdated with a suggested new place that you can accept, instead of being lost or silently moved.</li>
+  <li><b>Hand over your findings</b>: export a Markdown report, a machine-readable JSON file, and a ready-to-paste prompt for an AI agent. Copy a single comment as a prompt. Reply to comments, and mark a review done or archived.</li>
+  <li><b>Improve your agent rules</b>: mark a comment as a recurring pattern and get a proposed update to <code>AGENTS.md</code> that you can edit before it is written. Comments flagged without rule text are listed as needing wording.</li>
 </ul>
 
 <h3>Where your reviews are stored</h3>
-<p>Reviews are plain JSON files in <b>review groups</b>. A group is one git repository holding the reviews of as many projects as you like. Give a group a remote to keep it in sync between your devices, with a separate SSH key per group if your accounts need different identities. Use separate groups to keep unrelated work, such as different organisations, apart. Nothing is stored in your project's repository.</p>
+<p>Reviews are stored in <b>review groups</b>. A group is one git repository holding the reviews of as many projects as you like; each review is a small file plus one append-only log of events per device, in a <a href="{{pluginUrl}}/blob/master/spec/SPEC.md">documented format</a>, so merging two devices never conflicts and other tools can read the same reviews. Give a group a remote to keep it in sync between your devices, with a separate SSH key per group if your accounts need different identities. Use separate groups to keep unrelated work, such as different organisations, apart. Nothing is stored in your project's repository. Reviews made with version 0.1.0 are imported automatically.</p>
 
 <h3>Requirements</h3>
 <ul>

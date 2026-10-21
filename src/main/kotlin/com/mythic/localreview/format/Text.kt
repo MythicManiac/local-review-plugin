@@ -9,8 +9,12 @@ import java.security.MessageDigest
  * The lines of one side of a file, as the line model of ALGORITHMS 1.1 defines them. Behaves as a list of the
  * lines; additionally keeps the UTF-8 bytes of each line so hashing many windows of one file encodes each line once.
  */
-class Lines(private val list: List<String>) : List<String> by list {
+class Lines(private val list: List<String>) : AbstractList<String>() {
     private val encoded: Array<ByteArray> by lazy(LazyThreadSafetyMode.PUBLICATION) { Array(list.size) { list[it].toByteArray(Charsets.UTF_8) } }
+
+    override val size: Int get() = list.size
+
+    override fun get(index: Int): String = list[index]
 
     /** [hashLines] of the lines `from until to` (0-based, exclusive end), without re-encoding. */
     fun hashRange(from: Int, to: Int): String {
@@ -21,10 +25,6 @@ class Lines(private val list: List<String>) : List<String> by list {
         }
         return toHex(md.digest())
     }
-
-    override fun equals(other: Any?) = list == other
-    override fun hashCode() = list.hashCode()
-    override fun toString() = list.toString()
 }
 
 private val LF = byteArrayOf('\n'.code.toByte())
