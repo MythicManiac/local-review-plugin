@@ -307,6 +307,7 @@ class ReviewService(private val project: Project) : Disposable {
     }
 
     fun close() {
+        ApplicationManager.getApplication().invokeLater({ com.mythic.localreview.ui.notes.ReviewNotes.close(project) }, ModalityState.any())
         active?.close()
         active = null
         groupInfo = null

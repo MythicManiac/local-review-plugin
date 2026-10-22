@@ -37,6 +37,14 @@ Adopted the frozen specification (`spec/` submodule, tag `baseline-1`) on branch
 - [x] P6 UI: two-range comments, region marks, background progress, replies, review status, rule decisions, outdated + accept suggestion
 - [x] P7 Docs, changelog, version 0.2.0
 
+## Follow-up: review notes (done, unreleased)
+
+Comments that belong to no lines, as their own editor tab (`ui/notes/`); no format change, they are the spec's `scope: review` comments (CONFORMANCE "Both" item 6).
+
+- [x] Notes tab: virtual file + `FileEditorProvider`, openable beside the current diff; threaded cards (edit, reply, resolve, delete with undo, copy prompt), resolved hidden by default
+- [x] Toolbar actions, Comments-tab double-click reveals the note, tab closes with the review
+- [x] Smoked in `runIde`: split next to the diff, add/reply/resolve/show resolved, persistence across restarts, narrow-pane layout (compact composer, wrapping buttons)
+
 ## Verification done
 
 * Conformance: all spec vectors, the `examples/` fold and evaluation, and the submodule drift test.

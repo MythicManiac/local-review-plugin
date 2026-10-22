@@ -253,6 +253,20 @@ class ProposeAgentsMdAction : NeedsReviewAction() {
     }
 }
 
+/** Opens the notes of the whole review as an editor tab. */
+class OpenReviewNotesAction : NeedsReviewAction() {
+    override fun actionPerformed(e: AnActionEvent) {
+        com.mythic.localreview.ui.notes.ReviewNotes.open(e.project ?: return)
+    }
+}
+
+/** Opens the notes of the whole review in a split next to the current editor (typically the diff), so both are visible together. */
+class OpenReviewNotesBesideAction : NeedsReviewAction() {
+    override fun actionPerformed(e: AnActionEvent) {
+        com.mythic.localreview.ui.notes.ReviewNotes.open(e.project ?: return, toTheSide = true)
+    }
+}
+
 class AddReviewNoteAction : NeedsReviewAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return

@@ -194,6 +194,7 @@ core/    GitCli, GitCommitter, GroupSync, SshKeys, AtomicFiles                  
 export/  Markdown / JSON / agent prompt / AGENTS.md proposal                                          [no IDE deps]
 ui/      ReviewService (lifecycle, analysis, writes), tool window (changes tree, comments tab), actions, dialogs,
          diff/ (DiffExtension: inline comments, add-comment gutter, hunk marks), settings
+         notes/ (the review notes tab: comments with `scope: review`, an editor tab on a virtual file so it can be split beside a diff)
 spec/    git submodule: the frozen specification, its vectors and example
 ```
 

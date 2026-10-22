@@ -16,6 +16,7 @@
                              id="com.mythic.localreview.settings"
                              displayName="Local Diff Review"/>
     <diff.DiffExtension implementation="com.mythic.localreview.ui.diff.ReviewDiffExtension"/>
+    <fileEditorProvider implementation="com.mythic.localreview.ui.notes.ReviewNotesEditorProvider"/>
   </extensions>
 
   <actions>
@@ -42,9 +43,15 @@
       <action id="LocalReview.OpenDiff" class="com.mythic.localreview.ui.OpenFirstDiffAction"
               text="Open Diff" description="Open the diff viewer on the first file not yet reviewed"
               icon="AllIcons.Actions.Diff"/>
-      <action id="LocalReview.AddReviewNote" class="com.mythic.localreview.ui.AddReviewNoteAction"
-              text="Add Review-Level Comment..." description="Add a comment about the review as a whole"
+      <action id="LocalReview.OpenReviewNotes" class="com.mythic.localreview.ui.OpenReviewNotesAction"
+              text="Review Notes" description="Open the notes about the whole review as a tab (concerns that belong to no particular lines)"
               icon="AllIcons.General.Balloon"/>
+      <action id="LocalReview.OpenReviewNotesBeside" class="com.mythic.localreview.ui.OpenReviewNotesBesideAction"
+              text="Review Notes Beside the Diff" description="Open the review notes in a split next to the current editor"
+              icon="AllIcons.Actions.SplitVertically"/>
+      <action id="LocalReview.AddReviewNote" class="com.mythic.localreview.ui.AddReviewNoteAction"
+              text="Add Review Note..." description="Add a note about the review as a whole (a dialog; the Review Notes tab has an inline editor)"
+              icon="AllIcons.General.Add"/>
       <action id="LocalReview.HideViewed" class="com.mythic.localreview.ui.ToggleHideViewedAction"
               text="Hide Reviewed Files" description="Hide files already marked as reviewed"
               icon="AllIcons.General.Filter"/>

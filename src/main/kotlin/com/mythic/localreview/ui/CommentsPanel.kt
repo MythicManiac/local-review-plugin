@@ -137,7 +137,7 @@ class CommentsPanel(private val project: Project, private val service: ReviewSer
     /** Opens the diff at the comment: where it was written if the code there is unchanged, else where the suggestion says it went. */
     fun navigate(c: Annotation) {
         val a = service.active ?: return
-        if (c.anchor is Anchor.Review) return edit(c)
+        if (c.anchor is Anchor.Review) return com.mythic.localreview.ui.notes.ReviewNotes.open(project, reveal = c.id)
         val file = a.fileOf(c) ?: return edit(c)
         val lines = c.anchor as? Anchor.Lines
         val scroll = when {

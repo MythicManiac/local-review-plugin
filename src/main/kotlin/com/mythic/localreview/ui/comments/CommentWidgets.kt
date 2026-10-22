@@ -42,12 +42,16 @@ interface WidthAdjustable {
 }
 
 /** The editable fields of a comment: kind, text, and whether it is a recurring pattern for AGENTS.md, with the rule text if the reviewer wrote one. */
-class CommentForm(initialKind: Kind, initialBody: String, initialCandidate: Boolean, initialRuleText: String?) : JPanel(BorderLayout()) {
+class CommentForm(initialKind: Kind, initialBody: String, initialCandidate: Boolean, initialRuleText: String?, compact: Boolean = false) : JPanel(BorderLayout()) {
     private val kindButtons = Kind.entries.associateWith { JRadioButton(it.label) }
-    val bodyArea = JBTextArea(initialBody, 5, 60).apply { lineWrap = true; wrapStyleWord = true; font = UIUtil.getLabelFont() }
-    private val ruleCheck = JBCheckBox("Recurring pattern: propose an AGENTS.md rule", initialCandidate)
+
+    /** In a narrow pane (the review notes beside a diff) the three kinds are a drop-down instead of a row of radio buttons that would be cut off. */
+    private val kindCombo = com.intellij.openapi.ui.ComboBox(Kind.entries.toTypedArray()).apply { selectedItem = initialKind }
+    private val compactKind = compact
+    val bodyArea = JBTextArea(initialBody, 5, if (compact) 20 else 60).apply { lineWrap = true; wrapStyleWord = true; font = UIUtil.getLabelFont() }
+    private val ruleCheck = JBCheckBox(if (compact) "Rule candidate (AGENTS.md)" else "Recurring pattern: propose an AGENTS.md rule", initialCandidate)
     private val ruleText = JBTextField(initialRuleText ?: "").apply {
-        emptyText.text = "Rule for agents (optional; leave empty to word it later)"
+        emptyText.text = if (compact) "Rule text (optional)" else "Rule for agents (optional; leave empty to word it later)"
         isEnabled = initialCandidate
     }
 
@@ -60,9 +64,10 @@ class CommentForm(initialKind: Kind, initialBody: String, initialCandidate: Bool
             b.isSelected = k == initialKind
             b.foreground = k.color
         }
+        kindCombo.renderer = com.intellij.ui.dsl.listCellRenderer.textListCellRenderer<Kind> { it?.label }
         ruleCheck.addActionListener { ruleText.isEnabled = ruleCheck.isSelected; if (ruleCheck.isSelected) ruleText.requestFocusInWindow() }
         val form = FormBuilder.createFormBuilder()
-            .addComponent(kindRow)
+            .addComponent(if (compact) kindCombo else kindRow)
             .addComponent(JBScrollPane(bodyArea))
             .addComponent(ruleCheck)
             .addComponent(ruleText)
@@ -72,7 +77,7 @@ class CommentForm(initialKind: Kind, initialBody: String, initialCandidate: Bool
         add(form, BorderLayout.CENTER)
     }
 
-    fun kind(): Kind = kindButtons.entries.first { it.value.isSelected }.key
+    fun kind(): Kind = if (compactKind) kindCombo.selectedItem as Kind else kindButtons.entries.first { it.value.isSelected }.key
     fun text(): String = bodyArea.text.trim()
     fun rule(): RuleInput = RuleInput(ruleCheck.isSelected, ruleText.text.trim().ifEmpty { null })
 
@@ -86,8 +91,9 @@ class InlineComposer(
     defaultKind: Kind = Kind.CHANGE_REQUEST,
     private val onSave: (Kind, String, RuleInput) -> String?,
     private val onCancel: () -> Unit,
+    compact: Boolean = false,
 ) : JPanel(BorderLayout()), WidthAdjustable {
-    val form = CommentForm(initial?.kind ?: defaultKind, initial?.body ?: "", initial?.isRuleCandidate == true, initial?.ruleText)
+    val form = CommentForm(initial?.kind ?: defaultKind, initial?.body ?: "", initial?.isRuleCandidate == true, initial?.ruleText, compact)
     private val error = JBLabel().apply { foreground = JBColor.RED; isVisible = false }
 
     init {
@@ -208,7 +214,7 @@ class CommentCard(val comment: Annotation, actions: CommentCardActions) : JPanel
         val metaLabel = JBLabel(meta.toString()).apply { foreground = JBColor.GRAY }
 
         val left = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply { isOpaque = false; add(title); add(metaLabel) }
-        val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 10, 0)).apply {
+        val buttons = JPanel(WrapLayout(FlowLayout.LEFT, 10, 0)).apply {
             isOpaque = false
             border = JBUI.Borders.emptyTop(4)
             add(link("Edit") { actions.edit(comment) })
