@@ -6,8 +6,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- The lines a comment is pinned to are highlighted in the diff, in a colour of their own (not the selection colour): saved comments tint their lines by kind, and while you hover the `+` the lines a new comment would get are shown, so it is visible that the selection decides the range. They stay highlighted while the comment is being written.
 ### Changed
 
+- The Repository dropdown of the New Review dialog shows the folder name first, then where it is (relative to the project, or with `~`), at full width, instead of a truncated absolute path.
 ### Fixed
 
 ## [0.2.0] - 2026-10-21
