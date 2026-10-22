@@ -19,6 +19,11 @@ import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseListener
 import com.intellij.openapi.editor.event.EditorMouseMotionListener
+import com.intellij.openapi.editor.event.SelectionEvent
+import com.intellij.openapi.editor.event.SelectionListener
+import com.intellij.openapi.editor.markup.TextAttributes
+import java.awt.Color
+import com.mythic.localreview.ui.color
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.editor.impl.EditorEmbeddedComponentManager
 import com.intellij.openapi.editor.markup.GutterIconRenderer
@@ -54,6 +59,8 @@ import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
+
+private val PIN_ACCENT = com.intellij.ui.JBColor(java.awt.Color(0xF0, 0xA0, 0x20, 0x60), java.awt.Color(0xF0, 0xA0, 0x20, 0x50))
 
 private fun DiffSide.toReview(): Side = if (this == DiffSide.LEFT) Side.OLD else Side.NEW
 private fun Side.toDiff(): DiffSide = if (this == Side.OLD) DiffSide.LEFT else DiffSide.RIGHT
@@ -113,11 +120,55 @@ class DiffReviewController(
         else -> emptyList()
     }
 
-    private class Entry(val comment: Annotation, val inline: Inline?, val host: JPanel)
+    private class Entry(val comment: Annotation, val inline: Inline?, val host: JPanel, val pins: Pins) {
+        fun dispose() {
+            inline?.dispose()
+            pins.clear()
+        }
+    }
 
     private val entries = HashMap<String, Entry>()
     private val drafts = ArrayList<Inline>()
+    private val draftPins = ArrayList<Pins>()
     private val hoverResets = ArrayList<() -> Unit>()
+
+    /** Highlighters that show which lines a comment is pinned to (or would be), drawn apart from the editor's own selection colour. */
+    private class Pins {
+        val marks = ArrayList<Pair<EditorEx, RangeHighlighter>>()
+
+        fun clear() {
+            marks.forEach { (ed, hl) -> if (!ed.isDisposed) ed.markupModel.removeHighlighter(hl) }
+            marks.clear()
+        }
+    }
+
+    private fun kindTint(c: Annotation): Color = c.kind.color.let { Color(it.red, it.green, it.blue, 0x2E) }
+
+    /** Highlights the lines [start]..[end] (1-based) of [side] in whichever editor shows them; in a unified diff only the lines that side has. */
+    private fun highlight(pins: Pins, side: Side, start: Int, end: Int, color: Color) {
+        val ds = side.toDiff()
+        val target = targets.firstOrNull { it.hasSide(ds) && it.toEditorLine(ds, start - 1) >= 0 } ?: targets.firstOrNull { it.hasSide(ds) } ?: return
+        val editor = target.editor
+        val doc = editor.document
+        val attrs = TextAttributes().apply { backgroundColor = color }
+        fun add(a: Int, b: Int) {
+            if (a < 0 || b >= doc.lineCount) return
+            val hl = editor.markupModel.addRangeHighlighter(doc.getLineStartOffset(a), doc.getLineEndOffset(b), HighlighterLayer.SELECTION - 1, attrs, HighlighterTargetArea.LINES_IN_RANGE)
+            hl.setErrorStripeMarkColor(color)
+            pins.marks += editor to hl
+        }
+        var runStart = -1
+        var prev = -2
+        for (l in start..end) {
+            val e = target.toEditorLine(ds, l - 1)
+            when {
+                e < 0 -> { if (runStart >= 0) add(runStart, prev); runStart = -1; prev = -2 }
+                runStart >= 0 && e == prev + 1 -> prev = e
+                else -> { if (runStart >= 0) add(runStart, prev); runStart = e; prev = e }
+            }
+        }
+        if (runStart >= 0) add(runStart, prev)
+    }
 
     /** A line of [t]'s editor that carries a hunk checkbox (else line 0), used to reserve the "+" gutter lane. */
     private fun spacerLineFor(t: EditorTarget): Int {
@@ -172,10 +223,12 @@ class DiffReviewController(
     }
 
     private fun clearRendered() {
-        entries.values.forEach { it.inline?.dispose() }
+        entries.values.forEach { it.dispose() }
         entries.clear()
         drafts.forEach { it.dispose() }
         drafts.clear()
+        draftPins.forEach { it.clear() }
+        draftPins.clear()
         hunkMarkers.forEach { (ed, hl) -> if (!ed.isDisposed) ed.markupModel.removeHighlighter(hl) }
         hunkMarkers.clear()
     }
@@ -207,7 +260,7 @@ class DiffReviewController(
         for (id in entries.keys.toList()) {
             val e = entries[id]!!
             if (id !in byId || e.comment != byId[id]) {
-                e.inline?.dispose()
+                e.dispose()
                 entries.remove(id)
             }
         }
@@ -240,7 +293,9 @@ class DiffReviewController(
         val host = JPanel(BorderLayout()).apply { isOpaque = false }
         showCard(host, c)
         val inline = addInlay(target.editor, line, above, host, priority)
-        entries[c.id] = Entry(c, inline, host)
+        val pins = Pins()
+        (c.anchor as? Anchor.Lines)?.ranges?.filter { sideOk[it.side] == true }?.forEach { highlight(pins, it.side, it.startLine, it.endLine, kindTint(c)) }
+        entries[c.id] = Entry(c, inline, host, pins)
     }
 
     private fun showCard(host: JPanel, c: Annotation) {
@@ -353,6 +408,14 @@ class DiffReviewController(
         val editor = t.editor
         var hoverLine = -1
         var highlighter: RangeHighlighter? = null
+        // What a click on the "+" would pin the comment to, shown as the pointer moves, so it is visible that the selection decides it.
+        val preview = Pins().also { draftPins += it }
+
+        fun updatePreview() {
+            preview.clear()
+            if (hoverLine < 0) return
+            resolvePin(t, hoverLine)?.first?.forEach { highlight(preview, it.side, it.startLine, it.endLine, PIN_ACCENT) }
+        }
 
         fun place(line: Int, renderer: GutterIconRenderer) {
             highlighter?.let { if (!editor.isDisposed) editor.markupModel.removeHighlighter(it) }
@@ -365,6 +428,7 @@ class DiffReviewController(
         // An invisible placeholder keeps the gutter lane reserved so showing/hiding the "+" never shifts the layout.
         fun clear() {
             hoverLine = -1
+            preview.clear()
             if (!editor.isDisposed && editor.document.lineCount > 0) place(spacerLineFor(t), LaneSpacer)
         }
 
@@ -376,6 +440,7 @@ class DiffReviewController(
             if (at == null || !commentable(at.first, at.second)) return clear()
             hoverLine = line
             place(line, AddCommentRenderer(line) { startComposer(t, line) })
+            updatePreview()
         }
 
         editor.addEditorMouseMotionListener(object : EditorMouseMotionListener {
@@ -388,6 +453,11 @@ class DiffReviewController(
                 // Keep the icon while the pointer is over the gutter: only clear when it leaves the editor entirely.
                 val p = SwingUtilities.convertPoint(e.mouseEvent.component, e.mouseEvent.point, editor.component)
                 if (!editor.component.contains(p)) clear()
+            }
+        }, this)
+        editor.selectionModel.addSelectionListener(object : SelectionListener {
+            override fun selectionChanged(e: SelectionEvent) {
+                if (hoverLine >= 0) updatePreview()
             }
         }, this)
         hoverResets += { clear() }
@@ -419,7 +489,8 @@ class DiffReviewController(
         return Side.entries.mapNotNull { s -> perSide.getValue(s).takeIf { it.isNotEmpty() }?.let { s to (it.min()..it.max()) } }
     }
 
-    private fun startComposer(t: EditorTarget, clickedLine: Int) {
+    /** The ranges (with snapshots) and the last editor line that a comment started by clicking `+` on [clickedLine] would get, or null if nothing can be pinned there. */
+    private fun resolvePin(t: EditorTarget, clickedLine: Int): Pair<List<AnchorRange>, Int>? {
         val editor = t.editor
         val doc = editor.document
         var startLine = clickedLine
@@ -437,7 +508,7 @@ class DiffReviewController(
             }
         }
         val raw = if (t is SideTarget) {
-            val a = t.fromEditorLine(startLine) ?: return
+            val a = t.fromEditorLine(startLine) ?: return null
             val b = t.fromEditorLine(endLine) ?: a
             listOf(a.first.toReview() to (a.second..maxOf(a.second, b.second)))
         } else rangesFor(t, clickedLine, startLine, endLine, hasSelection)
@@ -447,13 +518,24 @@ class DiffReviewController(
             val end = minOf(r.last + 1, lines.size)
             if (sideOk[side] != true || start > end) null else AnchorRange(side, start, end, captureSnapshot(lines, start, end))
         }
-        if (ranges.isEmpty()) return
+        return if (ranges.isEmpty()) null else ranges to endLine
+    }
+
+    private fun startComposer(t: EditorTarget, clickedLine: Int) {
+        val (ranges, endLine) = resolvePin(t, clickedLine) ?: return
+        val editor = t.editor
         val anchor = Anchor.Lines(change.path, change.oldPath, review.pin, ranges)
+
+        // The lines this comment will be pinned to stay highlighted while it is being written, apart from the text selection.
+        val pins = Pins().also { draftPins += it }
+        ranges.forEach { highlight(pins, it.side, it.startLine, it.endLine, PIN_ACCENT) }
 
         val host = JPanel(BorderLayout()).apply { isOpaque = false }
         var handle: Inline? = null
         fun dismiss() {
             handle?.let { drafts.remove(it); it.dispose() }
+            pins.clear()
+            draftPins.remove(pins)
         }
         val composer = InlineComposer(
             initial = null,
