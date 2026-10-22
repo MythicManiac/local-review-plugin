@@ -184,11 +184,17 @@ class DiffReviewController(
     /** A hunk as the viewer shows it: its changed lines on each side that has line features, and the editor line that carries its checkbox. */
     private class ViewerHunk(val hunk: Hunk, val target: EditorTarget, val line: Int)
 
-    /** Whether the editor of [side] shows exactly the lines of the format's line model (the document has one phantom line after a final newline). */
-    private val sideOk: Map<Side, Boolean> = Side.entries.associateWith { side ->
+    /**
+     * Whether the editor of [side] shows exactly the text the format's line model decoded from the blob. Then its line numbers are the stored ones: the
+     * document has one phantom line after a final newline, and a real project file that was edited meanwhile fails the text comparison.
+     */
+    private var sideOk: Map<Side, Boolean> = computeSideOk()
+
+    private fun computeSideOk(): Map<Side, Boolean> = Side.entries.associateWith { side ->
         val lines = ctx.lines(side) ?: return@associateWith false
         val doc = documentOf(side.toDiff()) ?: return@associateWith false
-        doc.lineCount == lines.size || doc.lineCount == lines.size + 1 || (lines.isEmpty() && doc.lineCount == 1)
+        val textOk = ctx.text(side)?.let { doc.text == it } ?: true
+        textOk && (doc.lineCount == lines.size || doc.lineCount == lines.size + 1 || (lines.isEmpty() && doc.lineCount == 1))
     }
 
     private fun documentOf(side: DiffSide) = when (viewer) {
@@ -211,6 +217,13 @@ class DiffReviewController(
         service.addListener(this, listener)
         (viewer as? DiffViewerBase)?.addListener(object : DiffViewerListener() {
             override fun onAfterRediff() {
+                // The pane may show a real project file (so Ctrl+click works); if that file was edited meanwhile, its numbering is no longer the format's.
+                val now = computeSideOk()
+                if (now != sideOk) {
+                    sideOk = now
+                    entries.values.forEach { it.dispose() }
+                    entries.clear()
+                }
                 computeHunks()
                 sync()
             }

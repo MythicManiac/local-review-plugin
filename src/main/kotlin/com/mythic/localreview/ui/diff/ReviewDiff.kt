@@ -31,8 +31,18 @@ import com.mythic.localreview.ui.ReviewService
  * by the format's line model (ALGORITHMS 1), null for a side that is absent or not text. Line comments and region marks exist only for a side that has
  * them, so the numbers a user sees are the numbers that are stored.
  */
-class ReviewFileContext(val project: Project, val review: ActiveReview, val change: ChangedFile, val oldLines: Lines?, val newLines: Lines?) {
+class ReviewFileContext(
+    val project: Project,
+    val review: ActiveReview,
+    val change: ChangedFile,
+    val oldLines: Lines?,
+    val newLines: Lines?,
+    /** The text each viewer pane must show for [oldLines] / [newLines]; a pane that shows anything else has other line numbers than the format. */
+    val oldText: String? = null,
+    val newText: String? = null,
+) {
     fun lines(side: Side): Lines? = if (side == Side.OLD) oldLines else newLines
+    fun text(side: Side): String? = if (side == Side.OLD) oldText else newText
 }
 
 object ReviewDiff {
@@ -74,29 +84,35 @@ internal class FileDiffProducer(
         val blobs = review.blobs ?: throw DiffRequestProducerException(review.problem ?: "The reviewed commits are not available")
         val sideLines = review.lines!!
         val h = review.header
-        fun content(side: Side): Pair<DiffContent, Lines?> {
-            val blob = change.blob(side) ?: return DiffContentFactoryEx.getInstanceEx().createEmpty() to null
+        /** The content of one side, its lines, and the text the viewer must show for them (the format's decoding of the blob). */
+        class Side3(val content: DiffContent, val lines: Lines?, val text: String?)
+
+        fun content(side: Side): Side3 {
+            val blob = change.blob(side) ?: return Side3(DiffContentFactoryEx.getInstanceEx().createEmpty(), null, null)
             val bytes = blobs.read(blob) ?: throw DiffRequestProducerException("The file content $blob is not in this repository")
             val path = if (side == Side.OLD) change.oldPath ?: change.path else change.path
             val lines = sideLines.of(change, side)
             if (lines == null) {
                 // Not text by the format's rules (ALGORITHMS 1.3): the IDE may still show something, but it has no line numbers to comment on.
-                return DiffContentFactoryEx.getInstanceEx().createFromBytes(project, bytes, LocalFilePath(review.root.resolve(path).toString(), false)) to null
+                return Side3(DiffContentFactoryEx.getInstanceEx().createFromBytes(project, bytes, LocalFilePath(review.root.resolve(path).toString(), false)), null, null)
             }
             // Feed the viewer the text the line model decoded (no byte order mark, LF line ends), so its numbering is the format's by construction.
             val text = lines.joinToString("\n") + if (bytes.isNotEmpty() && bytes.last() == '\n'.code.toByte()) "\n" else ""
+            // The head side shows the project's own file when it holds exactly this text: the editor is then a real one (Ctrl+click, Find Usages, docs).
+            val real = if (side == Side.NEW) projectFileWithText(path, text) else null
+            if (real != null) return Side3(DiffContentFactory.getInstance().create(project, real), lines, text)
             val type = FileTypeManager.getInstance().getFileTypeByFileName(path.substringAfterLast('/'))
-            return DiffContentFactory.getInstance().create(project, text, type) to lines
+            return Side3(DiffContentFactory.getInstance().create(project, text, type), lines, text)
         }
 
-        val (left, oldLines) = content(Side.OLD)
-        val (right, newLines) = content(Side.NEW)
+        val left = content(Side.OLD)
+        val right = content(Side.NEW)
         val request = SimpleDiffRequest(
-            change.path, left, right,
+            change.path, left.content, right.content,
             "${h.baseRef} (${h.pin.baseSha.take(8)})${change.oldPath?.takeIf { it != change.path }?.let { " · $it" } ?: ""}",
             "${h.headRef} (${h.pin.headSha.take(8)})",
         )
-        val ctx = ReviewFileContext(project, review, change, oldLines, newLines)
+        val ctx = ReviewFileContext(project, review, change, left.lines, right.lines, left.text, right.text)
         request.putUserData(ReviewDiff.CONTEXT, ctx)
         request.putUserData(DiffUserDataKeys.FORCE_READ_ONLY, true)
         // Marks are made from a whitespace-sensitive comparison: a whitespace-only change is part of the change (ALGORITHMS 6).
@@ -104,5 +120,18 @@ internal class FileDiffProducer(
         request.putUserData(DiffUserDataKeys.CONTEXT_ACTIONS, FileActions.create(project, review, ctx))
         if (scrollTo != null) request.putUserData(DiffUserDataKeys.SCROLL_TO_LINE, com.intellij.openapi.util.Pair.create(scrollTo.first, scrollTo.second))
         return request
+    }
+
+    /**
+     * The project's file at [path] (relative to the repository root) if its document holds exactly [text], else null: a checkout of another commit, or
+     * uncommitted edits, must not be passed off as the reviewed code.
+     */
+    private fun projectFileWithText(path: String, text: String): VirtualFile? {
+        val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByNioFile(review.root.resolve(path)) ?: return null
+        return com.intellij.openapi.application.ReadAction.compute<VirtualFile?, RuntimeException> {
+            if (!vf.isValid || vf.isDirectory) return@compute null
+            val doc = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(vf) ?: return@compute null
+            if (doc.text == text) vf else null
+        }
     }
 }

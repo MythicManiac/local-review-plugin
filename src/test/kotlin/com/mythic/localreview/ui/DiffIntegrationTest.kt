@@ -125,6 +125,54 @@ class DiffIntegrationTest : BasePlatformTestCase() {
         }
     }
 
+    private fun headDocumentFile(request: com.intellij.diff.requests.DiffRequest): com.intellij.openapi.vfs.VirtualFile? {
+        val right = (request as com.intellij.diff.requests.ContentDiffRequest).contents[1] as com.intellij.diff.contents.DocumentContent
+        return com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getFile(right.document)
+    }
+
+    fun testHeadSideIsTheRealProjectFileWhenItHoldsTheReviewedCodeSoGoToDefinitionCanWork() {
+        val repo = TestRepo()
+        repo.write("src/a.txt", body(10))
+        repo.commit("base")
+        repo.branch("feature")
+        repo.write("src/a.txt", body(10).replace("line 5\n", "line 5 changed\n"))
+        repo.commit("work") // feature is checked out: the working tree holds the head
+
+        val review = activate(repo)
+        val request = FileDiffProducer(project, review, review.changes.single(), null).process(UserDataHolderBase(), EmptyProgressIndicator())
+        val file = headDocumentFile(request)!!
+        assertFalse("a real file, not a copy in memory: $file", file is com.intellij.testFramework.LightVirtualFile)
+        assertEquals(repo.dir.resolve("src/a.txt").toString().replace('\\', '/'), file.path)
+        // The base side is never on disk.
+        val left = (request as com.intellij.diff.requests.ContentDiffRequest).contents[0] as com.intellij.diff.contents.DocumentContent
+        assertTrue(com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getFile(left.document).let { it == null || it is com.intellij.testFramework.LightVirtualFile })
+    }
+
+    fun testAFileThatDiffersFromTheReviewedCodeIsNeverPassedOffAsIt() {
+        val repo = TestRepo()
+        repo.write("src/a.txt", body(10))
+        repo.commit("base")
+        repo.branch("feature")
+        repo.write("src/a.txt", body(10).replace("line 5\n", "line 5 changed\n"))
+        repo.commit("work")
+        // Uncommitted edit in the working tree: the file is not the reviewed head any more.
+        repo.write("src/a.txt", body(10).replace("line 5\n", "line 5 edited later\n"))
+
+        val review = activate(repo)
+        val request = FileDiffProducer(project, review, review.changes.single(), null).process(UserDataHolderBase(), EmptyProgressIndicator())
+        val file = headDocumentFile(request)
+        assertTrue("a copy, not the project file: $file", file == null || file is com.intellij.testFramework.LightVirtualFile)
+        val right = (request as com.intellij.diff.requests.ContentDiffRequest).contents[1] as com.intellij.diff.contents.DocumentContent
+        assertTrue("shows the reviewed text", right.document.text.contains("line 5 changed") && !right.document.text.contains("edited later"))
+
+        // The same when the branch checked out is another one: the file on disk is the base version.
+        repo.git.run("checkout", "-q", "--", "src/a.txt")
+        repo.checkout("master")
+        val onOther = FileDiffProducer(project, review, review.changes.single(), null).process(UserDataHolderBase(), EmptyProgressIndicator())
+        val f2 = headDocumentFile(onOther)
+        assertTrue(f2 == null || f2 is com.intellij.testFramework.LightVirtualFile)
+    }
+
     fun testViewerIsFedTheLinesOfTheFormatNotTheIdesOwnDecoding() {
         val repo = TestRepo()
         // A byte order mark and CRLF line ends: the IDE would drop the mark and normalise the ends; the format's line model does the same, so the numbers agree.
