@@ -66,6 +66,7 @@
 
     <group id="LocalReview.ChangesPopup">
       <action id="LocalReview.OpenSelectedDiff" class="com.mythic.localreview.ui.OpenSelectedDiffAction"/>
+      <action id="LocalReview.OpenSelectedDiffNewTab" class="com.mythic.localreview.ui.OpenSelectedDiffInNewTabAction"/>
       <action id="LocalReview.MarkSelectedViewed" class="com.mythic.localreview.ui.MarkSelectedViewedAction"/>
       <action id="LocalReview.MarkSelectedUnviewed" class="com.mythic.localreview.ui.MarkSelectedUnviewedAction"/>
       <action id="LocalReview.CommentOnSelectedFile" class="com.mythic.localreview.ui.CommentOnSelectedFileAction"/>

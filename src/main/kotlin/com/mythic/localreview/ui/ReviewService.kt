@@ -100,6 +100,10 @@ class ReviewService(private val project: Project) : Disposable {
             val a = active
             if (a != null && !project.isDisposed && a.open.stamp() != seenStamp) reloadActive()
         }, 3, 3, TimeUnit.SECONDS)
+        // Following a reference from a review diff to a changed file opens that file's review diff in a new tab (see FollowToDiff).
+        val follow = com.mythic.localreview.ui.diff.FollowToDiff(project, this)
+        project.messageBus.connect(this).subscribe(com.intellij.openapi.fileEditor.FileEditorManagerListener.FILE_EDITOR_MANAGER, follow)
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(com.intellij.openapi.actionSystem.ex.AnActionListener.TOPIC, follow)
     }
 
     fun addListener(parent: Disposable, l: ReviewListener) {

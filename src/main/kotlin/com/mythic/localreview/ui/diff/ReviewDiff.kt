@@ -48,26 +48,43 @@ class ReviewFileContext(
 object ReviewDiff {
     val CONTEXT: Key<ReviewFileContext> = Key.create("LocalReview.FileContext")
 
-    private val openFiles = HashMap<Project, VirtualFile>()
+    /** The tab that opening from the Changes tree or the Comments tab reuses, so those do not pile up tabs. */
+    private val mainTab = HashMap<Project, VirtualFile>()
 
-    /** Closes the review diff tab for [project], if open. EDT only. */
+    /** Tabs opened with [open] `newTab = true` (following a reference to a changed file): they stay until the user closes them. */
+    private val extraTabs = HashMap<Project, MutableList<VirtualFile>>()
+
+    /** Closes every review diff tab of [project]. EDT only. */
     fun close(project: Project) {
         if (project.isDisposed) return
-        openFiles.remove(project)?.let { FileEditorManager.getInstance(project).closeFile(it) }
+        val fem = FileEditorManager.getInstance(project)
+        mainTab.remove(project)?.let { fem.closeFile(it) }
+        extraTabs.remove(project)?.forEach { fem.closeFile(it) }
     }
+
+    /** Whether [file] is one of the review diff tabs of [project]. */
+    fun isReviewTab(project: Project, file: VirtualFile): Boolean = file === mainTab[project] || extraTabs[project]?.any { it === file } == true
 
     /**
      * Opens the review's changes in the IDE diff viewer (editor tab, or window per the IDE's diff setting), positioned on
-     * [change]. All changed files are in one chain so the viewer's next/previous-file navigation works. Replaces any
-     * previously opened review diff tab so tabs do not pile up.
+     * [change]. All changed files are in one chain so the viewer's next/previous-file navigation works. By default the main review
+     * tab is replaced so tabs do not pile up; with [newTab] a further tab is opened and every other tab, with its editor state, is left alone.
      */
-    fun open(project: Project, change: ChangedFile, scrollTo: Pair<DiffSide, Int>? = null) {
+    fun open(project: Project, change: ChangedFile, scrollTo: Pair<DiffSide, Int>? = null, newTab: Boolean = false) {
         val a = ReviewService.getInstance(project).active ?: return
         val producers = a.changes.map { FileDiffProducer(project, a, it, if (it.path == change.path) scrollTo else null) }
         val chain = SimpleDiffRequestChain.fromProducers(producers, a.changes.indexOfFirst { it.path == change.path }.coerceAtLeast(0))
-        val file = ChainDiffVirtualFile(chain, "Review: ${a.header.title}")
-        openFiles.remove(project)?.let { FileEditorManager.getInstance(project).closeFile(it) }
-        openFiles[project] = file
+        val title = "Review: ${a.header.title}"
+        val fem = FileEditorManager.getInstance(project)
+        val file = ChainDiffVirtualFile(chain, if (newTab) "$title · ${change.path.substringAfterLast('/')}" else title)
+        if (newTab) {
+            val list = extraTabs.getOrPut(project) { ArrayList() }
+            list.removeAll { !fem.isFileOpen(it) } // tabs the user closed
+            list += file
+        } else {
+            mainTab.remove(project)?.let { fem.closeFile(it) }
+            mainTab[project] = file
+        }
         DiffEditorTabFilesManager.getInstance(project).showDiffFile(file, true)
     }
 }
@@ -128,9 +145,9 @@ internal class FileDiffProducer(
      */
     private fun projectFileWithText(path: String, text: String): VirtualFile? {
         val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByNioFile(review.root.resolve(path)) ?: return null
-        return com.intellij.openapi.application.ReadAction.compute<VirtualFile?, RuntimeException> {
-            if (!vf.isValid || vf.isDirectory) return@compute null
-            val doc = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(vf) ?: return@compute null
+        return com.intellij.openapi.application.ReadAction.computeBlocking<VirtualFile?, RuntimeException> {
+            if (!vf.isValid || vf.isDirectory) return@computeBlocking null
+            val doc = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(vf) ?: return@computeBlocking null
             if (doc.text == text) vf else null
         }
     }

@@ -7,11 +7,12 @@ All notable changes to this project are documented here. The format is based on 
 ### Added
 
 - The lines a comment is pinned to are highlighted in the diff, in a colour of their own (not the selection colour): saved comments tint their lines by kind, and while you hover the `+` the lines a new comment would get are shown, so it is visible that the selection decides the range. They stay highlighted while the comment is being written.
+- Review diffs can be open in several tabs. Following a reference (Go to Declaration, Ctrl+click) from a review diff to a file that is part of the review opens that file's review diff in a new tab, at the line navigation chose; a file outside the review opens as an ordinary editor of the checked-out version. The diff you came from stays where it is, with its state. A target you already had open in an editor is just shown. *Open Diff in New Tab* in the Changes tree's context menu opens another tab on demand.
 
 ### Changed
 
 - The Repository dropdown of the New Review dialog shows the folder name first, then where it is (relative to the project, or with `~`), at full width, instead of a truncated absolute path.
-- The head side of a review diff shows the project's own file when the checked-out file holds exactly the reviewed code, so Ctrl+click (Go to Declaration), Find Usages and documentation work there. A file that differs (another branch checked out, uncommitted edits) is never passed off as the reviewed code: the pane then shows the reviewed text as before, without navigation. The base side is never on disk and has no navigation.
+- The head side of a review diff shows the project's own file when the checked-out file holds exactly the reviewed code, so Ctrl+click (Go to Declaration), Find Usages and documentation work there. While a review pane has focus its document is read-only, so an action that would edit the file (Markdown's Ctrl+B) fails instead of changing your file. A file that differs (another branch checked out, uncommitted edits) is never passed off as the reviewed code: the pane then shows the reviewed text as before, without navigation. The base side is never on disk and has no navigation.
 
 ### Fixed
 

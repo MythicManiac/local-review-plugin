@@ -304,6 +304,17 @@ class OpenSelectedDiffAction : ReviewAction("Open Diff") {
     }
 }
 
+class OpenSelectedDiffInNewTabAction : ReviewAction("Open Diff in New Tab") {
+    override fun update(e: AnActionEvent) {
+        e.presentation.isEnabled = !e.getData(ReviewDataKeys.SELECTED_FILES).isNullOrEmpty()
+    }
+
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        ReviewDiff.open(project, e.getData(ReviewDataKeys.SELECTED_FILES)?.firstOrNull() ?: return, newTab = true)
+    }
+}
+
 abstract class MarkViewedAction(private val viewed: Boolean, text: String) : ReviewAction(text) {
     override fun update(e: AnActionEvent) {
         e.presentation.isEnabled = !e.getData(ReviewDataKeys.SELECTED_FILES).isNullOrEmpty()

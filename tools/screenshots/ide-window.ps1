@@ -4,6 +4,7 @@
 #   place <w> <h>          resize and move the window (Marketplace screenshots: 1280 800)
 #   shot <file.png>        save the window rectangle as PNG
 #   click <x> <y>          left click at window-relative coordinates
+#   ctrlclick <x> <y>      Ctrl+click (Go to Declaration by mouse)
 #   keys <SendKeys text>   send keystrokes to the focused window
 # The window is found by title prefix (default "orders-service", the demo project name; override with -Title).
 param([string]$cmd, [string]$a1, [string]$a2, [string]$a3, [string]$Title = "orders-service")
@@ -65,6 +66,10 @@ switch ($cmd) {
             $bmp.Save($a1, [System.Drawing.Imaging.ImageFormat]::Png); "$w x $hh" }
   "click" { Focus; $r = Rect; [void][W]::SetCursorPos($r.L + [int]$a1, $r.T + [int]$a2); Start-Sleep -Milliseconds 120
             [W]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); [W]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero); "clicked" }
+  "ctrlclick" { Focus; $r = Rect; [void][W]::SetCursorPos($r.L + [int]$a1, $r.T + [int]$a2); Start-Sleep -Milliseconds 150
+            [W]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 100
+            [W]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); [W]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 100
+            [W]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero); "ctrl-clicked" }
   "dclick" { Focus; $r = Rect; [void][W]::SetCursorPos($r.L + [int]$a1, $r.T + [int]$a2); Start-Sleep -Milliseconds 120
             for ($i = 0; $i -lt 2; $i++) { [W]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); [W]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60 }; "double-clicked" }
   "move"  { $r = Rect; [void][W]::SetCursorPos($r.L + [int]$a1, $r.T + [int]$a2); "moved" }

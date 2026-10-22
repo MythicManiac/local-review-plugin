@@ -130,6 +130,7 @@ class DiffReviewController(
     private val entries = HashMap<String, Entry>()
     private val drafts = ArrayList<Inline>()
     private val draftPins = ArrayList<Pins>()
+    private val guards = ArrayList<WriteGuard>()
     private val hoverResets = ArrayList<() -> Unit>()
 
     /** Highlighters that show which lines a comment is pinned to (or would be), drawn apart from the editor's own selection colour. */
@@ -209,6 +210,8 @@ class DiffReviewController(
     init {
         Disposer.register(viewer, this)
         for (t in targets) {
+            val file = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getFile(t.editor.document)
+            if (file != null && file.isInLocalFileSystem) guards += WriteGuard(t.editor).also { it.install() }
             installHover(t)
             t.editor.scrollPane.viewport.addComponentListener(object : java.awt.event.ComponentAdapter() {
                 override fun componentResized(e: java.awt.event.ComponentEvent?) = refitAll()
@@ -232,7 +235,40 @@ class DiffReviewController(
 
     override fun dispose() {
         disposed = true
+        guards.forEach { it.release() }
         clearRendered()
+    }
+
+    /**
+     * A project file shown in a review pane is the real, shared document. The viewer is read-only for typing, but some actions (Markdown's Ctrl+B
+     * toggles bold) and refactorings edit the document anyway, and autosave would write that into the user's file. So while a review pane has focus, its
+     * document is read-only; it is writable again as soon as focus leaves, and when the pane closes. A document that was not writable stays as it was.
+     */
+    private inner class WriteGuard(private val editor: EditorEx) {
+        private val doc = editor.document
+        private var held = false
+
+        fun acquire() {
+            if (!held && doc.isWritable) {
+                doc.setReadOnly(true)
+                held = true
+            }
+        }
+
+        fun release() {
+            if (held) {
+                doc.setReadOnly(false)
+                held = false
+            }
+        }
+
+        fun install() {
+            editor.contentComponent.addFocusListener(object : java.awt.event.FocusAdapter() {
+                override fun focusGained(e: java.awt.event.FocusEvent?) = acquire()
+                override fun focusLost(e: java.awt.event.FocusEvent?) = release()
+            })
+            if (editor.contentComponent.hasFocus()) acquire()
+        }
     }
 
     private fun clearRendered() {
