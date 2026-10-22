@@ -56,6 +56,15 @@ class NewReviewDialog(private val project: Project, private val service: ReviewS
 
     init {
         title = "New Review"
+        rootBox.renderer = object : ColoredListCellRenderer<String>() {
+            override fun customizeCellRenderer(l: JList<out String>, v: String?, i: Int, s: Boolean, f: Boolean) {
+                val p = Path.of(v ?: return)
+                append(p.name.ifEmpty { p.toString() }, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                val where = describeParent(p)
+                if (where.isNotEmpty()) append("   $where", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                toolTipText = p.toString()
+            }
+        }
         rootBox.addActionListener { loadRefs(); loadGroups(null) }
         loadRefs()
         loadGroups(null)
@@ -69,6 +78,17 @@ class NewReviewDialog(private val project: Project, private val service: ReviewS
         headBox.addActionListener(retitle)
         retitle.actionPerformed(null)
         init()
+    }
+
+    /** What identifies a repository besides its folder name: relative to this project, else where it is, with the home folder as `~`. */
+    private fun describeParent(p: Path): String {
+        val base = project.basePath?.let { Path.of(it).toAbsolutePath().normalize() }
+        val abs = p.toAbsolutePath().normalize()
+        if (base != null && abs == base) return "(this project)"
+        if (base != null && abs.startsWith(base)) return "in " + base.relativize(abs).parent?.toString().orEmpty().ifEmpty { "(this project)" }
+        val parent = abs.parent?.toString() ?: return ""
+        val home = System.getProperty("user.home")
+        return if (home != null && parent.startsWith(home)) "~" + parent.removePrefix(home) else parent
     }
 
     /** Fills the group list; preselects [select], else the group last used for this project, else "default". */
@@ -100,7 +120,10 @@ class NewReviewDialog(private val project: Project, private val service: ReviewS
 
     override fun createCenterPanel(): JComponent {
         val b = FormBuilder.createFormBuilder()
-        if (roots.size > 1) b.addLabeledComponent("Repository:", rootBox)
+        if (roots.size > 1) {
+            // BorderLayout makes the box use all the width; a bare combo box keeps the width of its longest item's prefix.
+            b.addLabeledComponent("Repository:", JPanel(java.awt.BorderLayout()).apply { add(rootBox, java.awt.BorderLayout.CENTER) })
+        }
         val groupRow = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0)).apply {
             add(groupBox)
             add(com.intellij.ui.components.ActionLink("New group…") { newGroup() })
